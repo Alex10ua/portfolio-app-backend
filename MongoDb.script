@@ -6,8 +6,12 @@ db.createCollection("users", {
     validator: {
         $jsonSchema: {
             bsonType: "object",
-            required: ["username", "email", "passwordHash", "createdAt"],
+            required: ["userId", "username", "email", "passwordHash", "createdAt"],
             properties: {
+                userId: {
+                    bsonType: "string",
+                    description: "Ід користувача"
+                },
                 username: {
                     bsonType: "string",
                     description: "Ім'я користувача"
@@ -39,13 +43,17 @@ db.createCollection("portfolios", {
     validator: {
         $jsonSchema: {
             bsonType: "object",
-            required: ["userId", "name", "createdAt"],
+            required: ["portfolioId", "userId", "name", "createdAt"],
             properties: {
+                portfolioId: {
+                    bsonType: "objectId",
+                    description: "Ідентифікатор портфеля"
+                },
                 userId: {
                     bsonType: "objectId",
                     description: "Ідентифікатор користувача"
                 },
-                name: {
+                portfolioName: {
                     bsonType: "string",
                     description: "Назва портфеля"
                 },
@@ -86,11 +94,11 @@ db.createCollection("holdings", {
                     description: "Тікер символ активу"
                 },
                 quantity: {
-                    bsonType: "number",
+                    bsonType: "double",
                     description: "Кількість одиниць активу"
                 },
                 averagePurchasePrice: {
-                    bsonType: "number",
+                    bsonType: "double",
                     description: "Середня ціна придбання"
                 },
                 createdAt: {
@@ -117,6 +125,10 @@ db.createCollection("transactions", {
                     bsonType: "objectId",
                     description: "Ідентифікатор портфеля"
                 },
+                transactionId: {
+                    bsonType: "objectId",
+                    description: "Ідентифікатор портфеля"
+                },
                 date: {
                     bsonType: "date",
                     description: "Дата транзакції"
@@ -130,11 +142,11 @@ db.createCollection("transactions", {
                     description: "Тікер символ активу"
                 },
                 transactionType: {
-                    enum: ["buy", "sell"],
+                    enum: ["buy", "sell", "dividend", "split"],
                     description: "Тип транзакції"
                 },
                 quantity: {
-                    bsonType: "number",
+                    bsonType: "double",
                     description: "Кількість"
                 },
                 price: {
@@ -170,7 +182,7 @@ db.createCollection("marketData", {
                     description: "Поточна ціна"
                 },
                 change: {
-                    bsonType: "number",
+                    bsonType: "double",
                     description: "Зміна ціни"
                 },
                 volume: {
