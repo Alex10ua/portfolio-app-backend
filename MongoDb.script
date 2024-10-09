@@ -1,0 +1,200 @@
+// Підключення до бази даних
+use investment_portfolio;
+
+// 1. Користувачі (Users)
+db.createCollection("users", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["username", "email", "passwordHash", "createdAt"],
+            properties: {
+                username: {
+                    bsonType: "string",
+                    description: "Ім'я користувача"
+                },
+                email: {
+                    bsonType: "string",
+                    pattern: "^.+@.+\\..+$",
+                    description: "Електронна пошта"
+                },
+                passwordHash: {
+                    bsonType: "string",
+                    description: "Хеш паролю"
+                },
+                createdAt: {
+                    bsonType: "date",
+                    description: "Дата створення облікового запису"
+                },
+                updatedAt: {
+                    bsonType: "date",
+                    description: "Дата останнього оновлення профілю"
+                }
+            }
+        }
+    }
+});
+
+// 2. Портфелі (Portfolios)
+db.createCollection("portfolios", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["userId", "name", "createdAt"],
+            properties: {
+                userId: {
+                    bsonType: "objectId",
+                    description: "Ідентифікатор користувача"
+                },
+                name: {
+                    bsonType: "string",
+                    description: "Назва портфеля"
+                },
+                description: {
+                    bsonType: "string",
+                    description: "Опис портфеля"
+                },
+                createdAt: {
+                    bsonType: "date",
+                    description: "Дата створення портфеля"
+                },
+                updatedAt: {
+                    bsonType: "date",
+                    description: "Дата останнього оновлення портфеля"
+                }
+            }
+        }
+    }
+});
+
+// 3. Активи в портфелі (Holdings)
+db.createCollection("holdings", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["portfolioId", "assetType", "tickerSymbol", "quantity", "averagePurchasePrice", "createdAt"],
+            properties: {
+                portfolioId: {
+                    bsonType: "objectId",
+                    description: "Ідентифікатор портфеля"
+                },
+                assetType: {
+                    bsonType: "string",
+                    description: "Тип активу"
+                },
+                tickerSymbol: {
+                    bsonType: "string",
+                    description: "Тікер символ активу"
+                },
+                quantity: {
+                    bsonType: "number",
+                    description: "Кількість одиниць активу"
+                },
+                averagePurchasePrice: {
+                    bsonType: "number",
+                    description: "Середня ціна придбання"
+                },
+                createdAt: {
+                    bsonType: "date",
+                    description: "Дата додавання активу"
+                },
+                updatedAt: {
+                    bsonType: "date",
+                    description: "Дата останнього оновлення активу"
+                }
+            }
+        }
+    }
+});
+
+// 4. Транзакції (Transactions)
+db.createCollection("transactions", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["portfolioId", "date", "assetType", "tickerSymbol", "transactionType", "quantity", "price", "totalAmount"],
+            properties: {
+                portfolioId: {
+                    bsonType: "objectId",
+                    description: "Ідентифікатор портфеля"
+                },
+                date: {
+                    bsonType: "date",
+                    description: "Дата транзакції"
+                },
+                assetType: {
+                    bsonType: "string",
+                    description: "Тип активу"
+                },
+                tickerSymbol: {
+                    bsonType: "string",
+                    description: "Тікер символ активу"
+                },
+                transactionType: {
+                    enum: ["buy", "sell"],
+                    description: "Тип транзакції"
+                },
+                quantity: {
+                    bsonType: "number",
+                    description: "Кількість"
+                },
+                price: {
+                    bsonType: "number",
+                    description: "Ціна за одиницю"
+                },
+                totalAmount: {
+                    bsonType: "number",
+                    description: "Загальна сума транзакції"
+                }
+            }
+        }
+    }
+});
+
+// 5. Ринкові дані (MarketData)
+db.createCollection("marketData", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["tickerSymbol", "date", "price"],
+            properties: {
+                tickerSymbol: {
+                    bsonType: "string",
+                    description: "Тікер символ"
+                },
+                date: {
+                    bsonType: "date",
+                    description: "Дата котирування"
+                },
+                price: {
+                    bsonType: "number",
+                    description: "Поточна ціна"
+                },
+                change: {
+                    bsonType: "number",
+                    description: "Зміна ціни"
+                },
+                volume: {
+                    bsonType: "number",
+                    description: "Обсяг торгів"
+                }
+            }
+        }
+    }
+});
+
+// Створення індексів для покращення продуктивності запитів
+
+// Індекс на email в колекції users (унікальний)
+db.users.createIndex({ email: 1 }, { unique: true });
+
+// Індекс на userId в колекції portfolios
+db.portfolios.createIndex({ userId: 1 });
+
+// Індекс на portfolioId в колекції holdings
+db.holdings.createIndex({ portfolioId: 1 });
+
+// Індекс на portfolioId та date в колекції transactions
+db.transactions.createIndex({ portfolioId: 1, date: -1 });
+
+// Індекс на tickerSymbol та date в колекції marketData
+db.marketData.createIndex({ tickerSymbol: 1, date: -1 });
