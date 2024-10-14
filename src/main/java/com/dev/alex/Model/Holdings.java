@@ -17,12 +17,13 @@ import lombok.NoArgsConstructor;
 @Data
 public class Holdings {
     @Id
-    String portfolioId;
-    Assets assetType;
-    String tickerSymbol;
-    Double quantity;
-    Double averagePurchasePrice;
-    Date createdAt;
-    Date updatedAt;
+    private String holdingId;
+    private String portfolioId;
+    private Assets assetType;
+    private String tickerSymbol;
+    private Double quantity;
+    private Double averagePurchasePrice;
+    private Date createdAt;
+    private Date updatedAt;
 
 }

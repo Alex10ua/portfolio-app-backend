@@ -15,11 +15,11 @@ import lombok.NoArgsConstructor;
 @Data
 public class Portfolios {
     @Id
-    String portfolioId;
-    Users userId;
-    String portfolioName;
-    String description;
-    Date createdAt;
-    Date updatedAt;
+    private String portfolioId;
+    private Users userId;
+    private String portfolioName;
+    private String description;
+    private Date createdAt;
+    private Date updatedAt;
 
 }

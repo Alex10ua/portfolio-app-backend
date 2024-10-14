@@ -15,9 +15,9 @@ import lombok.NoArgsConstructor;
 @Data
 public class MarketData {
     @Id
-    String tickerSymbol;
-    Date date;
-    Double price;
-    Double forwardDividend;
-    Date nextDividenPayout;
+    private String tickerSymbol;
+    private Date date;
+    private Double price;
+    private Double forwardDividend;
+    private Date nextDividenPayout;
 }
