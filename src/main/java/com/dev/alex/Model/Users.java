@@ -9,7 +9,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-@Document("Users")
+@Document("users")
 @Data
 @AllArgsConstructor
 @NoArgsConstructor

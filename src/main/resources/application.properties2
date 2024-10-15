@@ -1,4 +1,9 @@
 spring.application.name=alex
-spring.data.mongodb.host=localhost
+spring.data.mongodb.authentication-database=user
+spring.data.mongodb.username=springbootapp
+spring.data.mongodb.password=1111
+spring.data.mongodb.database=portfolio
 spring.data.mongodb.port=27017
-spring.data.mongodb.database=userdb
+spring.data.mongodb.host=localhost
+# swagger-ui custom path
+springdoc.swagger-ui.path=/swagger-ui.html

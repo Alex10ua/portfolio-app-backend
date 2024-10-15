@@ -6,6 +6,8 @@ import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.TransacrionsRepository;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.TransactionServiceImpl;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.crossstore.ChangeSetPersister;
 import org.springframework.http.ResponseEntity;
@@ -17,7 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api/v1/transaction")
 public class TransactionController {
     @Autowired
     private TransactionServiceImpl transactionService;
@@ -28,29 +30,14 @@ public class TransactionController {
     @Autowired
     private HoldingsRepository holdingsRepository;
 
+    @Operation(summary = "Create Transaction", description = "Create new transaction")
+    @ApiResponse(responseCode = "200", description = "Transaction created successfully")
     @PostMapping("/{userId}/{portfolioId}/")
     public Transactions createTransaction(@RequestBody Transactions transaction, @PathVariable String portfolioId){
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
         //need check if ticker exists in portfolio first
-        Holdings holding = holdingService.findHoldingByPortfolioIdAndTicker(portfolioId, transaction.getTickerSymbol());
-        if (holding != null) {
-            //create engagement  to holding calculate all variables
-            Holdings updatedHolding = null;
-            holdingService.updateHoldingByPortfolioIdAndTickerSymbol(portfolioId, transaction.getTickerSymbol(), updatedHolding);
-        }
-        else {
-            Holdings newHolding = new Holdings();
-            newHolding.setHoldingId(UUID.randomUUID().toString());
-            newHolding.setPortfolioId(portfolioId);
-            newHolding.setAssetType(transaction.getAssetType());
-            newHolding.setTickerSymbol(transaction.getTickerSymbol());
-            newHolding.setQuantity(transaction.getQuantity());
-            newHolding.setAveragePurchasePrice(transaction.getPrice());
-            newHolding.setCreatedAt(transaction.getDate());
-            newHolding.setUpdatedAt(transaction.getDate());
-            holdingsRepository.save(newHolding);
-        }
+        holdingService.updateOrCreateHoldingInPortfolio(portfolioId, transaction);
 
         return transacrionsRepository.save(transaction);
     }

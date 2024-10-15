@@ -26,4 +26,10 @@ public class Holdings {
     private Date createdAt;
     private Date updatedAt;
 
+    public Holdings(String holdingId, Double quantity, Double averagePurchasePrice, Date updatedAt) {
+        this.holdingId = holdingId;
+        this.quantity = quantity;
+        this.averagePurchasePrice = averagePurchasePrice;
+        this.updatedAt = updatedAt;
+    }
 }
