@@ -9,5 +9,4 @@ import java.util.List;
 @Repository
 public interface PortfolioRepository extends MongoRepository<Portfolios, String> {
 
-    List<Portfolios> findAllByUserId(String userId);
 }

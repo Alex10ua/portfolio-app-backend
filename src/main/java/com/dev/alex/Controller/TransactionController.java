@@ -42,7 +42,7 @@ public class TransactionController {
 
     @GetMapping("/{portfolioId}/transactions")
     public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId){
-        return transactionService.findAllTransactionByPortfolioId(portfolioId);
+        return transactionService.findAllByPortfolioId(portfolioId);
     }
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
     public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions transaction, @PathVariable String transactionId){

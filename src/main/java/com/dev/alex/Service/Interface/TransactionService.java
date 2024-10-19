@@ -6,6 +6,5 @@ import java.util.List;
 public interface TransactionService {
 
     void createTransactions(List<Transactions> transactions);
-    List<Transactions> findAllTransactionByPortfolioIdAndUserId(String portfolioId, String userId);
     List<Transactions> findAllByPortfolioId(String portfolioId);
 }

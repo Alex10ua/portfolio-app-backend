@@ -19,10 +19,6 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     @Override
-    public List<Transactions> findAllTransactionByPortfolioIdAndUserId(String portfolioId, String userId) {
-        return transacrionsRepository.findAllByPortfolioIdAndUserId(portfolioId, userId);
-    }
-    @Override
     public List<Transactions> findAllByPortfolioId(String portfolioId) {
         return transacrionsRepository.findAllByPortfolioId(portfolioId);
     }

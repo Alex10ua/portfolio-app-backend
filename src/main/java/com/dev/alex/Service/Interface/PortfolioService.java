@@ -4,5 +4,5 @@ import com.dev.alex.Model.Portfolios;
 
 public interface PortfolioService {
 
-    Portfolios getPortfolioByUserId(String userId);
+    //Portfolios getPortfolioByUserId(String userId);
 }

@@ -9,5 +9,4 @@ public interface TransacrionsRepository  extends MongoRepository<Transactions, S
 
     List<Transactions> findAllByPortfolioId(String portfolioId);
 
-    List<Transactions> findAllByPortfolioIdAndUserId(String portfolioId, String userId);
 }

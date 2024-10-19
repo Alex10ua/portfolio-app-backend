@@ -43,7 +43,7 @@ public class HoldingServiceImpl implements HoldingsService {
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, transaction.getTickerSymbol());
         if (holding != null) {
             //create engagement  to holding calculate all variables
-            List<Transactions> transactionsList = transactionService.findAllTransactionByPortfolioIdAndUserId(portfolioId, transaction.getUserId());
+            List<Transactions> transactionsList = transactionService.findAllByPortfolioId(portfolioId);
             Double avgPrice = 0.0;
             Double quantity = 0.0;
             for (Transactions transactionList : transactionsList){
