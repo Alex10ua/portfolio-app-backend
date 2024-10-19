@@ -1,6 +1,5 @@
 package com.dev.alex.Controller;
 
-import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.TransacrionsRepository;
@@ -9,7 +8,6 @@ import com.dev.alex.Service.TransactionServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.crossstore.ChangeSetPersister;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -32,7 +30,7 @@ public class TransactionController {
 
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
-    @PostMapping("/{userId}/{portfolioId}/")
+    @PostMapping("/{portfolioId}/")
     public Transactions createTransaction(@RequestBody Transactions transaction, @PathVariable String portfolioId){
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
@@ -42,17 +40,17 @@ public class TransactionController {
         return transacrionsRepository.save(transaction);
     }
 
-    @GetMapping("/{userId}/{portfolioId}/transactions")
-    public List<Transactions> getAllTransactionByPortfolioIdAndUserId(@PathVariable String portfolioId, @PathVariable String userId){
-        return transactionService.findAllTransactionByPortfolioIdAndUserId(portfolioId, userId);
+    @GetMapping("/{portfolioId}/transactions")
+    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId){
+        return transactionService.findAllTransactionByPortfolioId(portfolioId);
     }
-    @PutMapping("/{userId}/{portfolioId}/transactions/{transactionId}/update")
+    @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
     public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions transaction, @PathVariable String transactionId){
         Transactions updatedTransaction;
         updatedTransaction = transaction;
         return ResponseEntity.ok(updatedTransaction);
     }
-    @DeleteMapping("/{userId}/{portfolioId}/transactions/{transactionId}/delete")
+    @DeleteMapping("/{portfolioId}/transactions/{transactionId}/delete")
     public ResponseEntity<Map<String, Boolean>> deleteTransaction(@PathVariable String transactionId){
         Transactions transaction = transacrionsRepository.findById(transactionId).orElseThrow(RuntimeException::new);
         transacrionsRepository.deleteById(transactionId);

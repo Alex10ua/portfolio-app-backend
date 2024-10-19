@@ -20,4 +20,10 @@ public class MarketData {
     private Double price;
     private Double forwardDividend;
     private Date nextDividenPayout;
+
+    public MarketData(Double price, Date date, String tickerSymbol) {
+        this.price = price;
+        this.date = date;
+        this.tickerSymbol = tickerSymbol;
+    }
 }

@@ -20,7 +20,7 @@ public class Transactions {
     @Id
     private String portfolioId;
     private String transactionId;
-    private String userId;
+    //private String userId;
     private Date date;
     private Assets assetType;
     private String tickerSymbol;

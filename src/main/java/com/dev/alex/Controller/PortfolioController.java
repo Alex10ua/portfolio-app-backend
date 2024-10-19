@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/portfolios")
+@RequestMapping("/api/v1")
 public class PortfolioController {
     @Autowired
     private PortfolioRepository portfolioRepository;
@@ -19,8 +19,14 @@ public class PortfolioController {
         portfolio.setPortfolioId(UUID.randomUUID().toString().concat(portfolio.getPortfolioName()));
         return portfolioRepository.save(portfolio);
     }
-    @GetMapping("/")
+    @Deprecated
+    @GetMapping("/byUserId")
     public List<Portfolios> findAllPortfoliosByUserId(@RequestBody String userId){
         return portfolioRepository.findAllByUserId(userId);
+    }
+
+    @GetMapping("/portfolios")
+    public List<Portfolios> findAllPortfoliosByUserId(){
+        return portfolioRepository.findAll();
     }
 }

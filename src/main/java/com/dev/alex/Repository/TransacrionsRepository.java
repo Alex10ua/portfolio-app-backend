@@ -7,5 +7,7 @@ import java.util.List;
 
 public interface TransacrionsRepository  extends MongoRepository<Transactions, String> {
 
+    List<Transactions> findAllByPortfolioId(String portfolioId);
+
     List<Transactions> findAllByPortfolioIdAndUserId(String portfolioId, String userId);
 }
