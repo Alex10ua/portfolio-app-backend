@@ -23,9 +23,11 @@ public class Transactions {
     //private String userId;
     private Date date;
     private Assets assetType;
+    private String assetName;
     private String tickerSymbol;
     private TransactionType transactionType;
     private Double quantity;
     private Double price;
     private Double totalAmount;
+    private Double commission;
 }

@@ -17,7 +17,8 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/transaction")
+@RequestMapping("/api/v1")
+@CrossOrigin(origins = "http://localhost:3000")//fix Access-Control-Allow-Origin
 public class TransactionController {
     @Autowired
     private TransactionServiceImpl transactionService;
@@ -30,7 +31,7 @@ public class TransactionController {
 
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
-    @PostMapping("/{portfolioId}/")
+    @PostMapping("/{portfolioId}/createTransaction")
     public Transactions createTransaction(@RequestBody Transactions transaction, @PathVariable String portfolioId){
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
