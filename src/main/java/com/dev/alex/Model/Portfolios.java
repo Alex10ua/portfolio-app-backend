@@ -22,4 +22,10 @@ public class Portfolios {
     private Date createdAt;
     private Date updatedAt;
 
+    public Portfolios(String portfolioName, String description, Date createdAt, Date updatedAt) {
+        this.portfolioName = portfolioName;
+        this.description = description;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
 }
