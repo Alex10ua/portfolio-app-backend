@@ -64,6 +64,7 @@ public class HoldingServiceImpl implements HoldingsService {
             newHolding.setPortfolioId(portfolioId);
             newHolding.setAssetType(transaction.getAssetType());
             newHolding.setTickerSymbol(transaction.getTickerSymbol());
+            newHolding.setLogoBase64(null);
             newHolding.setQuantity(transaction.getQuantity());
             newHolding.setAveragePurchasePrice(transaction.getPrice());
             newHolding.setCreatedAt(transaction.getDate());

@@ -1,5 +1,6 @@
 package com.dev.alex.Model;
 
+import java.util.Base64;
 import java.util.Date;
 
 import org.springframework.data.annotation.Id;
@@ -22,6 +23,7 @@ public class Holdings {
     private Assets assetType;
     private String name;
     private String tickerSymbol;
+    private Base64 logoBase64;
     private Double quantity;
     private Double averagePurchasePrice;
     private Date createdAt;
