@@ -33,3 +33,6 @@ build/
 .vscode/
 /.mvn/wrapper
 application.properties
+
+.data/
+/TODO.txt
