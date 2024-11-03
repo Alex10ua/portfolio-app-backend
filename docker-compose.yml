@@ -1,11 +1,18 @@
-version: "3.8"
-
 services:
   mongodb:
     image: "mongo:latest"
+    restart: on-failure
     environment:
       - "MONGO_INITDB_DATABASE=portfolio"
       - "MONGO_INITDB_ROOT_PASSWORD=secret"
       - "MONGO_INITDB_ROOT_USERNAME=root"
     ports:
       - "27017:27017"
+    volumes:
+      - "data:/data/db"
+    #volumes:
+    #  - type: bind
+    #  - source: "data"
+    #  - target: "/data/db"
+volumes:
+  data:
