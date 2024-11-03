@@ -11,6 +11,5 @@ public interface HoldingsService {
     void updateHoldingByPortfolioIdAndTickerSymbol(String portfolioId, String tickerSymbol, Holdings holding);
     Holdings findHoldingByPortfolioIdAndTicker(String portfolioId, String tickerSymbol);
     void updateOrCreateHoldingInPortfolio(String portfolioId, Transactions transaction);
-    void updateAvgPriveAndQuantity(String holdingId, Double avgPrice, Double quantity);
 
 }
