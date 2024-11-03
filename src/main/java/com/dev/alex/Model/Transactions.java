@@ -24,7 +24,7 @@ public class Transactions {
     private Date date;
     private Assets assetType;
     private String assetName;
-    private String tickerSymbol;
+    private String ticker;
     private TransactionType transactionType;
     private Double quantity;
     private Double price;

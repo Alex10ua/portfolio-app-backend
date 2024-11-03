@@ -22,4 +22,9 @@ public class TransactionServiceImpl implements TransactionService {
     public List<Transactions> findAllByPortfolioId(String portfolioId) {
         return transacrionsRepository.findAllByPortfolioId(portfolioId);
     }
+
+    @Override
+    public List<Transactions> findAllByPortfolioIdAndTicker(String portfolioId, String ticker) {
+        return transacrionsRepository.findAllByPortfolioIdAndTicker(portfolioId, ticker);
+    }
 }
