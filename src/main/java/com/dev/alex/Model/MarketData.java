@@ -1,6 +1,7 @@
 package com.dev.alex.Model;
 
 import java.util.Date;
+import java.util.List;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -15,15 +16,16 @@ import lombok.NoArgsConstructor;
 @Data
 public class MarketData {
     @Id
-    private String tickerSymbol;
+    private String ticker;
     private Date date;
     private Double price;
-    private Double forwardDividend;
-    private Date nextDividenPayout;
+    private List<Dividend> dividends;
+    private List<Splits> splits;
+    private Date updatedAt;
 
-    public MarketData(Double price, Date date, String tickerSymbol) {
+    public MarketData(Double price, Date date, String ticker) {
         this.price = price;
         this.date = date;
-        this.tickerSymbol = tickerSymbol;
+        this.ticker = ticker;
     }
 }
