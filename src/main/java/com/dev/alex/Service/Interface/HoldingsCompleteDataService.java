@@ -6,5 +6,5 @@ import java.util.List;
 
 public interface HoldingsCompleteDataService {
 
-    List<HoldingsCompleteData> getDataForAllHoldings();
+    List<HoldingsCompleteData> getAllHoldingsByPortfolioId(String portfolioId);
 }
