@@ -17,15 +17,15 @@ import lombok.NoArgsConstructor;
 public class MarketData {
     @Id
     private String ticker;
-    private Date date;
+    private String name;
     private Double price;
     private List<Dividend> dividends;
     private List<Splits> splits;
     private Date updatedAt;
 
-    public MarketData(Double price, Date date, String ticker) {
+    public MarketData(Double price, Date updatedAt, String ticker) {
         this.price = price;
-        this.date = date;
+        this.updatedAt = updatedAt;
         this.ticker = ticker;
     }
 }

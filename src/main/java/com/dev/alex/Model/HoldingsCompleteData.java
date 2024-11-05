@@ -10,8 +10,6 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class HoldingsCompleteData {
 
-    private byte logo;
-    private String contentType;
     private String name;
     private String ticker;
     private Double shareAmount;

@@ -15,7 +15,7 @@ public class HoldingController {
     @Autowired
     private HoldingServiceImpl holdingService;
 
-    @GetMapping("/{portfolioId}")
+    @GetMapping("/{portfolioId}/deprecated")
     public List<Holdings> getAllHoldingsByPortfolioId(@PathVariable String portfolioId){
         return holdingService.getAllHoldingsByPortfolioId(portfolioId);
     }

@@ -20,7 +20,6 @@ public class Holdings {
     private String holdingId;
     private String portfolioId;
     private Assets assetType;
-    private String name;
     private String ticker;
     private Double quantity;
     private Double averagePurchasePrice;
