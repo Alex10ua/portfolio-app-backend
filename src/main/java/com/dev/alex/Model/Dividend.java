@@ -11,5 +11,5 @@ import java.util.Date;
 public class Dividend {
 
     private Date dividendDate;
-    private Date dividendAmount;
+    private Double dividendAmount;
 }
