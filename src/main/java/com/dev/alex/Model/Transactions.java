@@ -18,9 +18,9 @@ import lombok.NoArgsConstructor;
 @Data
 public class Transactions {
     @Id
+    private String id;
     private String portfolioId;
     private String transactionId;
-    //private String userId;
     private Date date;
     private Assets assetType;
     private String assetName;
