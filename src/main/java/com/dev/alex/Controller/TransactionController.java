@@ -32,13 +32,15 @@ public class TransactionController {
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
     @PostMapping("/{portfolioId}/createTransaction")
-    public Transactions createTransaction(@RequestBody Transactions transaction, @PathVariable String portfolioId){
+    public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction, @PathVariable String portfolioId){
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
+        Transactions transactionStatus = transacrionsRepository.save(transaction);
         //need check if ticker exists in portfolio first
         holdingService.updateOrCreateHoldingInPortfolio(portfolioId, transaction);
-
-        return transacrionsRepository.save(transaction);
+        Map<String, Object> response = new HashMap<>();
+        response.put("save", transactionStatus);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/{portfolioId}/transactions")

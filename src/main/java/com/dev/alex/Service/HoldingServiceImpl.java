@@ -39,21 +39,21 @@ public class HoldingServiceImpl implements HoldingsService {
 
     @Override
     public Holdings findHoldingByPortfolioIdAndTicker(String portfolioId, String tickerSymbol) {
-        return holdingsRepository.findByPortfolioIdAndTicker(portfolioId, tickerSymbol);
+        return holdingsRepository.findByPortfolioIdAndTicker(portfolioId, tickerSymbol.toUpperCase());
     }
 
     @Override
     public void updateOrCreateHoldingInPortfolio(String portfolioId, Transactions transaction) {
-        Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, transaction.getTicker());
+        Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());
         if (holding != null) {
             //create engagement  to holding calculate all variables
-            List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, transaction.getTicker());
-            MarketData marketData = marketDataRepository.findByTicker(transaction.getTicker());
+            List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());
+            MarketData marketData = marketDataRepository.findByTicker(transaction.getTicker().toUpperCase());
             Double totalPrice = 0.0;
             Double quantity = 0.0;
             List<Splits> splitsList = marketData.getSplits();
             for (Transactions transactionList : transactionsList){
-                Double priceList = transactionList.getPrice();
+                Double priceList = transactionList.getTotalAmount();
                 Double quantityList = transactionList.getQuantity();
                 // **Sort the splitsList by splitDate in ascending order**
                 if (splitsList != null) {
@@ -80,7 +80,7 @@ public class HoldingServiceImpl implements HoldingsService {
             newHolding.setHoldingId(UUID.randomUUID().toString());
             newHolding.setPortfolioId(portfolioId);
             newHolding.setAssetType(transaction.getAssetType());
-            newHolding.setTicker(transaction.getTicker());
+            newHolding.setTicker(transaction.getTicker().toUpperCase());
             newHolding.setQuantity(transaction.getQuantity());
             newHolding.setAveragePurchasePrice(transaction.getPrice());
             newHolding.setCreatedAt(transaction.getDate());
