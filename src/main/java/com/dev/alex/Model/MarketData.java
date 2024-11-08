@@ -10,12 +10,14 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-@Document("marketData")
+
 @AllArgsConstructor
 @NoArgsConstructor
 @Data
+@Document("marketData")
 public class MarketData {
     @Id
+    private String id;
     private String ticker;
     private String name;
     private Double price;
