@@ -9,18 +9,20 @@ import com.dev.alex.Repository.MarketDataRepository;
 import com.dev.alex.Service.Interface.HoldingsCompleteDataService;
 import com.dev.alex.Service.Interface.HoldingsService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 
+@Service
 public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataService {
     @Autowired
     private HoldingsRepository holdingsRepository;
     @Autowired
     private HoldingServiceImpl holdingService;
     @Autowired
-    private MarketDataRepository marketDataRepository;
+    private MarketDataServiceImpl marketDataService;
     @Override
     public List<HoldingsCompleteData> getAllHoldingsByPortfolioId(String portfolioId) {
 
@@ -29,20 +31,31 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
 
         for (Holdings holding : allHolding){
             HoldingsCompleteData holdingsCompleteData = new HoldingsCompleteData();
-            MarketData marketData = marketDataRepository.findByTicker(holding.getTicker());
+            MarketData marketData = marketDataService.getMarketDataByTicker(holding.getTicker().toUpperCase());
             holdingsCompleteData.setName(marketData.getName());
-            holdingsCompleteData.setTicker(holding.getTicker());
+            holdingsCompleteData.setTicker(holding.getTicker().toUpperCase());
             holdingsCompleteData.setShareAmount(holding.getQuantity());
             holdingsCompleteData.setCostPerShare(holding.getAveragePurchasePrice());
             holdingsCompleteData.setCostBasis(holding.getAveragePurchasePrice()*holding.getQuantity());
             holdingsCompleteData.setCurrentTotalValue(holding.getQuantity()*marketData.getPrice());
             holdingsCompleteData.setCurrentShareValue(marketData.getPrice());
             //get last dividend * 4 = yearly dividend
-            Double forwardDiv = marketData.getDividends().getLast().getDividendAmount()*4;
-            holdingsCompleteData.setDividend(forwardDiv);
-            holdingsCompleteData.setDividendYield(Double.valueOf(new DecimalFormat("##.##").format(forwardDiv/marketData.getPrice()*100)));
-            holdingsCompleteData.setDividendYieldOnCost(Double.valueOf(new DecimalFormat("##.##").format(forwardDiv/holding.getAveragePurchasePrice()*100)));
-            holdingsCompleteData.setTotalReceivedDividend(0.0);
+            List<Dividend> dividendList = marketData.getDividends();
+            if (!dividendList.isEmpty()){
+                int lastIndex = dividendList.size() - 1;
+                Dividend dividend = dividendList.get(lastIndex);
+                Double forwardDiv = dividend.getDividendAmount() * 4;
+                holdingsCompleteData.setDividend(forwardDiv);
+                holdingsCompleteData.setDividendYield(forwardDiv/marketData.getPrice()*100);
+                holdingsCompleteData.setDividendYieldOnCost(forwardDiv/holding.getAveragePurchasePrice()*100);
+                holdingsCompleteData.setTotalReceivedDividend(0.0);
+            }else {
+                holdingsCompleteData.setDividend(0.0);
+                holdingsCompleteData.setDividendYield(0.0);
+                holdingsCompleteData.setDividendYieldOnCost(0.0);
+                holdingsCompleteData.setTotalReceivedDividend(0.0);
+            }
+
             holdingsCompleteDataList.add(holdingsCompleteData);
         }
         return holdingsCompleteDataList;
