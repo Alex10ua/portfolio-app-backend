@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.Splits;
@@ -53,6 +54,7 @@ public class HoldingServiceImpl implements HoldingsService {
             Double quantity = 0.0;
             List<Splits> splitsList = marketData.getSplits();
             for (Transactions transactionList : transactionsList){
+                if (transactionList.getTransactionType().equals(TransactionType.BUY)){
                 Double priceList = transactionList.getTotalAmount();
                 Double quantityList = transactionList.getQuantity();
                 // **Sort the splitsList by splitDate in ascending order**
@@ -69,6 +71,22 @@ public class HoldingServiceImpl implements HoldingsService {
 
                 quantity += quantityList;
                 totalPrice += priceList;
+                } else if (transactionList.getTransactionType().equals(TransactionType.SELL)) {
+                    Double priceList = transactionList.getTotalAmount();
+                    Double quantityList = transactionList.getQuantity();
+                    if (splitsList != null) {
+                        splitsList.sort(Comparator.comparing(Splits::getSplitDate));
+                        for (Splits splits : splitsList) {
+                            Date dateSplit = splits.getSplitDate();
+                            if (transactionList.getDate().before(dateSplit)) {
+                                priceList = priceList / splits.getRatioSplit();
+                                quantityList = quantityList * splits.getRatioSplit();
+                            }
+                        }
+                    }
+                    quantity -= quantityList;
+                    totalPrice -= priceList;
+                }
             }
             Double avgPrice = totalPrice/quantity;
 
