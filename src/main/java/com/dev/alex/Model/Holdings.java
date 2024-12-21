@@ -1,5 +1,6 @@
 package com.dev.alex.Model;
 
+import java.math.BigDecimal;
 import java.util.Date;
 
 import org.springframework.data.annotation.Id;
@@ -21,12 +22,12 @@ public class Holdings {
     private String portfolioId;
     private Assets assetType;
     private String ticker;
-    private Double quantity;
-    private Double averagePurchasePrice;
+    private BigDecimal quantity;
+    private BigDecimal averagePurchasePrice;
     private Date createdAt;
     private Date updatedAt;
 
-    public Holdings(String holdingId, Double quantity, Double averagePurchasePrice, Date updatedAt) {
+    public Holdings(String holdingId, BigDecimal quantity, BigDecimal averagePurchasePrice, Date updatedAt) {
         this.holdingId = holdingId;
         this.quantity = quantity;
         this.averagePurchasePrice = averagePurchasePrice;

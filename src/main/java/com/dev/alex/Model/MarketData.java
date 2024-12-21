@@ -1,8 +1,10 @@
 package com.dev.alex.Model;
 
+import java.math.BigDecimal;
 import java.util.Date;
 import java.util.List;
 
+import com.dev.alex.Model.Enums.DividendFrequency;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -20,12 +22,16 @@ public class MarketData {
     private String id;
     private String ticker;
     private String name;
-    private Double price;
+    private BigDecimal price;
+    private BigDecimal priceYesterday;
+    private DividendFrequency dividendFrequency;
     private List<Dividend> dividends;
     private List<Splits> splits;
+    private String country;
+    private String sector;
     private Date updatedAt;
 
-    public MarketData(Double price, Date updatedAt, String ticker) {
+    public MarketData(BigDecimal price, Date updatedAt, String ticker) {
         this.price = price;
         this.updatedAt = updatedAt;
         this.ticker = ticker;

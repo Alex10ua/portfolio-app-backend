@@ -11,10 +11,15 @@ import com.dev.alex.Service.Interface.HoldingsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.util.*;
 
 @Service
 public class HoldingServiceImpl implements HoldingsService {
+    private static final BigDecimal ZERO = BigDecimal.valueOf(0);
+    private static final MathContext MATH_CONTEXT = new MathContext(10, RoundingMode.HALF_EVEN);
 
     @Autowired
     private HoldingsRepository holdingsRepository;
@@ -50,45 +55,45 @@ public class HoldingServiceImpl implements HoldingsService {
             //create engagement  to holding calculate all variables
             List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());
             MarketData marketData = marketDataRepository.findByTicker(transaction.getTicker().toUpperCase());
-            Double totalPrice = 0.0;
-            Double quantity = 0.0;
+            BigDecimal totalPrice = ZERO;
+            BigDecimal quantity = ZERO;
             List<Splits> splitsList = marketData.getSplits();
             for (Transactions transactionList : transactionsList){
                 if (transactionList.getTransactionType().equals(TransactionType.BUY)){
-                Double priceList = transactionList.getTotalAmount();
-                Double quantityList = transactionList.getQuantity();
+                    BigDecimal priceList = transactionList.getTotalAmount();
+                    BigDecimal quantityList = transactionList.getQuantity();
                 // **Sort the splitsList by splitDate in ascending order**
                 if (splitsList != null) {
                     splitsList.sort(Comparator.comparing(Splits::getSplitDate));
                     for (Splits splits : splitsList) {
                         Date dateSplit = splits.getSplitDate();
                         if (transactionList.getDate().before(dateSplit)) {
-                            priceList = priceList / splits.getRatioSplit();
-                            quantityList = quantityList * splits.getRatioSplit();
+                            priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
+                            quantityList = quantityList.multiply(splits.getRatioSplit());
                         }
                     }
                 }
 
-                quantity += quantityList;
-                totalPrice += priceList;
+                quantity = quantity.add(quantityList);
+                totalPrice = totalPrice.add(priceList);
                 } else if (transactionList.getTransactionType().equals(TransactionType.SELL)) {
-                    Double priceList = transactionList.getTotalAmount();
-                    Double quantityList = transactionList.getQuantity();
+                    BigDecimal priceList = transactionList.getTotalAmount();
+                    BigDecimal quantityList = transactionList.getQuantity();
                     if (splitsList != null) {
                         splitsList.sort(Comparator.comparing(Splits::getSplitDate));
                         for (Splits splits : splitsList) {
                             Date dateSplit = splits.getSplitDate();
                             if (transactionList.getDate().before(dateSplit)) {
-                                priceList = priceList / splits.getRatioSplit();
-                                quantityList = quantityList * splits.getRatioSplit();
+                                priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
+                                quantityList = quantityList.multiply(splits.getRatioSplit());
                             }
                         }
                     }
-                    quantity -= quantityList;
-                    totalPrice -= priceList;
+                    quantity = quantity.subtract(quantityList);
+                    totalPrice = totalPrice.subtract(priceList);
                 }
             }
-            Double avgPrice = totalPrice/quantity;
+            BigDecimal avgPrice = totalPrice.divide(quantity, MATH_CONTEXT);
 
             holdingsRepository.updateAveragePurchasePriceAndQuantity(holding.getHoldingId(), avgPrice, quantity);
 

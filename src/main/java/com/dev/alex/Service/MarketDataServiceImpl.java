@@ -6,6 +6,8 @@ import com.dev.alex.Service.Interface.MarketDataService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+
 @Service
 public class MarketDataServiceImpl implements MarketDataService {
     @Autowired
@@ -14,5 +16,10 @@ public class MarketDataServiceImpl implements MarketDataService {
     @Override
     public MarketData getMarketDataByTicker(String ticker) {
         return marketDataRepository.findByTicker(ticker);
+    }
+
+    @Override
+    public void updatePriceByTicker(String ticker, BigDecimal price) {
+        marketDataRepository.updatePriceByTicker(ticker, price);
     }
 }

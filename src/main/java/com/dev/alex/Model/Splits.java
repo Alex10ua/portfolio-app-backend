@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.util.Date;
 @Data
 @NoArgsConstructor
@@ -11,5 +12,5 @@ import java.util.Date;
 public class Splits {
 
     private Date splitDate;
-    private Double ratioSplit;
+    private BigDecimal ratioSplit;
 }

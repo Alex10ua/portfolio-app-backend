@@ -35,7 +35,7 @@ public class TransactionController {
     public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction, @PathVariable String portfolioId){
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
-        transaction.setTotalAmount(transaction.getPrice()*transaction.getQuantity());
+        transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
         Transactions transactionStatus = transacrionsRepository.save(transaction);
         //need check if ticker exists in portfolio first
         holdingService.updateOrCreateHoldingInPortfolio(portfolioId, transaction);

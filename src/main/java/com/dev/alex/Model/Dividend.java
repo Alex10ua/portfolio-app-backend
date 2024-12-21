@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.util.Date;
 @Data
 @AllArgsConstructor
@@ -11,5 +12,5 @@ import java.util.Date;
 public class Dividend {
 
     private Date dividendDate;
-    private Double dividendAmount;
+    private BigDecimal dividendAmount;
 }

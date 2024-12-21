@@ -1,5 +1,6 @@
 package com.dev.alex.Model;
 
+import java.math.BigDecimal;
 import java.util.Date;
 
 import org.springframework.data.annotation.Id;
@@ -26,8 +27,8 @@ public class Transactions {
     private String assetName;
     private String ticker;
     private TransactionType transactionType;
-    private Double quantity;
-    private Double price;
-    private Double totalAmount;
-    private Double commission;
+    private BigDecimal quantity;
+    private BigDecimal price;
+    private BigDecimal totalAmount;
+    private BigDecimal commission;
 }
