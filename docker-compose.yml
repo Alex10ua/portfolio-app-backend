@@ -14,5 +14,17 @@ services:
     #  - type: bind
     #  - source: "data"
     #  - target: "/data/db"
+  #added for testing
+  #https://docs.tigerbeetle.com/operating/docker/
+  #tigerbeedb:
+   # image: ghcr.io/tigerbeetle/tigerbeetle
+   # command: "start --addresses=0.0.0.0:3001,0.0.0.0:3002,0.0.0.0:3003 /data/0_0.tigerbeetle"
+   # network_mode: host
+   # volumes:
+   #   - ./data:/data
+   # security_opt:
+   #   - "seccomp=unconfined"
+  #https://github.com/minio/minio/blob/master/docs/orchestration/docker-compose/docker-compose.yaml
+  #S3 alternative to store image assets
 volumes:
   data:
