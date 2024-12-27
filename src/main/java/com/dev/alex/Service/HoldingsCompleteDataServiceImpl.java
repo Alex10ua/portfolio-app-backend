@@ -35,12 +35,12 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
         for (Holdings holding : allHolding){
             HoldingsCompleteData holdingsCompleteData = new HoldingsCompleteData();
             MarketData marketData = marketDataService.getMarketDataByTicker(holding.getTicker().toUpperCase());
+            MarketData marketData1 = marketDataService.getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
             if (marketData.getPrice() == null || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0){
                 throw new IllegalArgumentException("Price must not be null or zero.");
             }
             BigDecimal divisionResult;
             BigDecimal dividedYieldPercentage;
-            holdingsCompleteData.setName(marketData.getName());
             holdingsCompleteData.setTicker(holding.getTicker().toUpperCase());
             holdingsCompleteData.setShareAmount(holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
             holdingsCompleteData.setCostPerShare(holding.getAveragePurchasePrice().setScale(2, RoundingMode.HALF_EVEN));
@@ -49,25 +49,15 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
             BigDecimal currentTotalValueShares = (holding.getQuantity().multiply(marketData.getPrice())).setScale(2, RoundingMode.HALF_EVEN);
             holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
             holdingsCompleteData.setCurrentShareValue(marketData.getPrice().setScale(2, RoundingMode.HALF_EVEN));
-            //get last dividend * 4 = yearly dividend
-            List<Dividend> dividendList = marketData.getDividends();
-            if (!dividendList.isEmpty()){
-                int lastIndex = dividendList.size() - 1;
-                Dividend dividend = dividendList.get(lastIndex);
-                BigDecimal forwardDiv = dividend.getDividendAmount().multiply(BigDecimal.valueOf(4));
-                holdingsCompleteData.setDividend(forwardDiv);
-                divisionResult = forwardDiv.divide(marketData.getPrice(), MATH_CONTEXT);
+            if (marketData1.getYearlyDividend() != null) {
+                holdingsCompleteData.setDividend(marketData1.getYearlyDividend());
+                divisionResult = marketData1.getYearlyDividend().divide(marketData1.getPrice(), MATH_CONTEXT);
                 dividedYieldPercentage = divisionResult.multiply(HUNDRED);
                 holdingsCompleteData.setDividendYield(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
-                divisionResult = forwardDiv.divide(holding.getAveragePurchasePrice(), MATH_CONTEXT);
+
+                divisionResult = marketData1.getYearlyDividend().divide(holding.getAveragePurchasePrice(), MATH_CONTEXT);
                 dividedYieldPercentage = divisionResult.multiply(HUNDRED);
                 holdingsCompleteData.setDividendYieldOnCost(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
-                holdingsCompleteData.setTotalReceivedDividend(ZERO);
-            }else {
-                holdingsCompleteData.setDividend(ZERO);
-                holdingsCompleteData.setDividendYield(ZERO);
-                holdingsCompleteData.setDividendYieldOnCost(ZERO);
-                holdingsCompleteData.setTotalReceivedDividend(ZERO);
             }
             BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(2, RoundingMode.HALF_EVEN);
             holdingsCompleteData.setTotalProfit(totalProfit);
@@ -75,7 +65,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
             divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
             dividedYieldPercentage = divisionResult.multiply(HUNDRED);
             holdingsCompleteData.setTotalProfitPercentage(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
-            holdingsCompleteData.setDailyChange(marketData.getPrice().subtract(marketData.getPriceYesterday()).setScale(2,RoundingMode.HALF_EVEN));
+            holdingsCompleteData.setDailyChange(marketData.getPrice().subtract(marketData1.getPriceYesterday()).setScale(2,RoundingMode.HALF_EVEN));
             holdingsCompleteDataList.add(holdingsCompleteData);
         }
         return holdingsCompleteDataList;

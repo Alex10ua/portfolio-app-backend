@@ -8,4 +8,5 @@ public interface MarketDataService {
 
     public MarketData getMarketDataByTicker(String ticker);
     void updatePriceByTicker(String ticker, BigDecimal price);
+    public MarketData getMarketDataForHoldingsPage(String ticker);
 }

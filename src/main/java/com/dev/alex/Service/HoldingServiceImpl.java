@@ -90,7 +90,7 @@ public class HoldingServiceImpl implements HoldingsService {
                         }
                     }
                     quantity = quantity.subtract(quantityList);
-                    totalPrice = totalPrice.subtract(priceList);
+                    totalPrice = totalPrice.subtract(priceList);//TODO find correct way to calculate avg price if 10 stock - 1 stock and 10 stock - 10 stock + 1 stock
                 }
             }
             BigDecimal avgPrice = totalPrice.divide(quantity, MATH_CONTEXT);

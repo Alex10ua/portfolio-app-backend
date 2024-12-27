@@ -22,4 +22,9 @@ public class MarketDataServiceImpl implements MarketDataService {
     public void updatePriceByTicker(String ticker, BigDecimal price) {
         marketDataRepository.updatePriceByTicker(ticker, price);
     }
+
+    @Override
+    public MarketData getMarketDataForHoldingsPage(String ticker) {
+        return  marketDataRepository.findByTickerForHoldingsPage(ticker);
+    }
 }
