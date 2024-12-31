@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.util.Date;
 import java.util.List;
 
+import com.dev.alex.Model.NonDbModel.Dividend;
+import com.dev.alex.Model.NonDbModel.Splits;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 

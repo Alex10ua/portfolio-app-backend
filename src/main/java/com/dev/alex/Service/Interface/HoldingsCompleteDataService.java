@@ -1,6 +1,6 @@
 package com.dev.alex.Service.Interface;
 
-import com.dev.alex.Model.HoldingsCompleteData;
+import com.dev.alex.Model.NonDbModel.HoldingsCompleteData;
 
 import java.util.List;
 

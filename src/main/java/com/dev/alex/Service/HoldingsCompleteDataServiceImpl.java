@@ -1,8 +1,7 @@
 package com.dev.alex.Service;
 
-import com.dev.alex.Model.Dividend;
 import com.dev.alex.Model.Holdings;
-import com.dev.alex.Model.HoldingsCompleteData;
+import com.dev.alex.Model.NonDbModel.HoldingsCompleteData;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Service.Interface.HoldingsCompleteDataService;
@@ -34,8 +33,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
         List<Holdings> allHolding = holdingService.getAllHoldingsByPortfolioId(portfolioId);
         for (Holdings holding : allHolding){
             HoldingsCompleteData holdingsCompleteData = new HoldingsCompleteData();
-            MarketData marketData = marketDataService.getMarketDataByTicker(holding.getTicker().toUpperCase());
-            MarketData marketData1 = marketDataService.getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
+            MarketData marketData = marketDataService.getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
             if (marketData.getPrice() == null || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0){
                 throw new IllegalArgumentException("Price must not be null or zero.");
             }
@@ -49,13 +47,13 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
             BigDecimal currentTotalValueShares = (holding.getQuantity().multiply(marketData.getPrice())).setScale(2, RoundingMode.HALF_EVEN);
             holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
             holdingsCompleteData.setCurrentShareValue(marketData.getPrice().setScale(2, RoundingMode.HALF_EVEN));
-            if (marketData1.getYearlyDividend() != null) {
-                holdingsCompleteData.setDividend(marketData1.getYearlyDividend());
-                divisionResult = marketData1.getYearlyDividend().divide(marketData1.getPrice(), MATH_CONTEXT);
+            if (marketData.getYearlyDividend() != null) {
+                holdingsCompleteData.setDividend(marketData.getYearlyDividend());
+                divisionResult = marketData.getYearlyDividend().divide(marketData.getPrice(), MATH_CONTEXT);
                 dividedYieldPercentage = divisionResult.multiply(HUNDRED);
                 holdingsCompleteData.setDividendYield(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
 
-                divisionResult = marketData1.getYearlyDividend().divide(holding.getAveragePurchasePrice(), MATH_CONTEXT);
+                divisionResult = marketData.getYearlyDividend().divide(holding.getAveragePurchasePrice(), MATH_CONTEXT);
                 dividedYieldPercentage = divisionResult.multiply(HUNDRED);
                 holdingsCompleteData.setDividendYieldOnCost(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
             }
@@ -65,7 +63,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
             divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
             dividedYieldPercentage = divisionResult.multiply(HUNDRED);
             holdingsCompleteData.setTotalProfitPercentage(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
-            holdingsCompleteData.setDailyChange(marketData.getPrice().subtract(marketData1.getPriceYesterday()).setScale(2,RoundingMode.HALF_EVEN));
+            holdingsCompleteData.setDailyChange(marketData.getPrice().subtract(marketData.getPriceYesterday()).setScale(2,RoundingMode.HALF_EVEN));
             holdingsCompleteDataList.add(holdingsCompleteData);
         }
         return holdingsCompleteDataList;

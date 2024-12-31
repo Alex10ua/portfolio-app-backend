@@ -1,9 +1,7 @@
 package com.dev.alex.Controller;
 
-import com.dev.alex.Model.Holdings;
-import com.dev.alex.Model.HoldingsCompleteData;
+import com.dev.alex.Model.NonDbModel.HoldingsCompleteData;
 import com.dev.alex.Service.HoldingsCompleteDataServiceImpl;
-import com.dev.alex.Service.Interface.HoldingsCompleteDataService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 

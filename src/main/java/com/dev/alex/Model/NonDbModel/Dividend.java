@@ -1,4 +1,4 @@
-package com.dev.alex.Model;
+package com.dev.alex.Model.NonDbModel;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -7,10 +7,10 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.util.Date;
 @Data
-@NoArgsConstructor
 @AllArgsConstructor
-public class Splits {
+@NoArgsConstructor
+public class Dividend {
 
-    private Date splitDate;
-    private BigDecimal ratioSplit;
+    private Date dividendDate;
+    private BigDecimal dividendAmount;
 }

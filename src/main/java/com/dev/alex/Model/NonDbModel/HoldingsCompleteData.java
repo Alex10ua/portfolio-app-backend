@@ -1,4 +1,4 @@
-package com.dev.alex.Model;
+package com.dev.alex.Model.NonDbModel;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
