@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 
 public interface MarketDataService {
 
-    public MarketData getMarketDataByTicker(String ticker);
+    MarketData getMarketDataByTicker(String ticker);
     void updatePriceByTicker(String ticker, BigDecimal price);
-    public MarketData getMarketDataForHoldingsPage(String ticker);
+    MarketData getMarketDataForHoldingsPage(String ticker);
 }

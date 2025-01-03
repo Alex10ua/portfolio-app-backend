@@ -4,6 +4,7 @@ import com.dev.alex.Model.MarketData;
 import com.dev.alex.Repository.MarketDataRepository;
 import com.dev.alex.Service.Interface.MarketDataService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Description;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -23,6 +24,7 @@ public class MarketDataServiceImpl implements MarketDataService {
         marketDataRepository.updatePriceByTicker(ticker, price);
     }
 
+    @Description("get info for holding on Holding web-page")
     @Override
     public MarketData getMarketDataForHoldingsPage(String ticker) {
         return  marketDataRepository.findByTickerForHoldingsPage(ticker);
