@@ -36,7 +36,7 @@ public class DividendsServiceImpl implements DividendsService {
         Map<String, List<Transactions>> holdingsTransactions = new HashMap<>();
         Map<String, List<Splits>> holdingsSplits = new HashMap<>();
         List<String> tickers = new ArrayList<>();
-
+        BigDecimal allYearlyDividends = BigDecimal.ZERO;
 
         for (Holdings holding : allHolding){
             tickers.add(holding.getTicker());
@@ -49,6 +49,7 @@ public class DividendsServiceImpl implements DividendsService {
             List<Splits> splitsList = marketData.getSplits();
             holdingsDividends.put(holding.getTicker(), dividendList);
             holdingsSplits.put(holding.getTicker(), splitsList);
+            allYearlyDividends = allYearlyDividends.add(marketData.getYearlyDividend().multiply(holding.getQuantity()));
             //move to DividendsUtils
             BigDecimal divForStock = dividendUtils.calculateAllDividendsByStockAuto(dividendList, transactionsList, splitsList);
             Map<String, BigDecimal> allDivForStock = new HashMap<>();
@@ -58,7 +59,7 @@ public class DividendsServiceImpl implements DividendsService {
         }
         dividendInfoCompleteData.setTickerAmount(divMapList);
         dividendInfoCompleteData.setAmountByMonth(dividendUtils.calculateDividendsPerMonthAuto(holdingsTransactions, holdingsDividends, holdingsSplits, tickers));
-
+        dividendInfoCompleteData.setYearlyCombineDividendsProjection(allYearlyDividends);
         return dividendInfoCompleteData;
     }
 }
