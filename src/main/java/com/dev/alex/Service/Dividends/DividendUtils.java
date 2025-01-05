@@ -38,8 +38,9 @@ public class DividendUtils {
                                 compareResult = totalStock.compareTo(ZERO);
                                 if (compareResult == 0 ) {
                                     totalStock = totalStock.add(transaction.getQuantity().multiply(split.getRatioSplit()));
+                                } else {
+                                    totalStock = totalStock.multiply(split.getRatioSplit());
                                 }
-                                totalStock = totalStock.multiply(split.getRatioSplit());
                             }
                         }
                         compareResult = totalStock.compareTo(ZERO);
@@ -72,6 +73,7 @@ public class DividendUtils {
                         totalStock = totalStock.subtract(transaction.getQuantity());
                     }
                 }
+                System.out.println(transaction.getTicker()+" div date:" + dividendDate + " stock present: "+ totalStock);
             }
             compareResult = totalStock.compareTo(ZERO);
             if (compareResult > 0){
@@ -147,7 +149,7 @@ public class DividendUtils {
                         }
                     }
                 }
-               System.out.println(holding+" div date:" + dividendDate + " stock present: "+ totalStock);
+               //System.out.println(holding+" div date:" + dividendDate + " stock present: "+ totalStock);
                compareResult = totalStock.compareTo(ZERO);
                if (compareResult > 0){
                     divAmount = totalStock.multiply(dividend.getDividendAmount());
