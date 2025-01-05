@@ -4,7 +4,8 @@ import java.math.BigDecimal;
 import java.util.Date;
 import java.util.List;
 
-import com.dev.alex.Model.Enums.DividendFrequency;
+import com.dev.alex.Model.NonDbModel.Dividend;
+import com.dev.alex.Model.NonDbModel.Splits;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -24,7 +25,8 @@ public class MarketData {
     private String name;
     private BigDecimal price;
     private BigDecimal priceYesterday;
-    private DividendFrequency dividendFrequency;
+    private BigDecimal lastDividendPayment;
+    private BigDecimal yearlyDividend;
     private List<Dividend> dividends;
     private List<Splits> splits;
     private String country;

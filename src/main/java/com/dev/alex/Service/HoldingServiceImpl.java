@@ -3,7 +3,7 @@ package com.dev.alex.Service;
 import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
-import com.dev.alex.Model.Splits;
+import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.MarketDataRepository;
@@ -60,14 +60,11 @@ public class HoldingServiceImpl implements HoldingsService {
             List<Splits> splitsList = marketData.getSplits();
             for (Transactions transactionList : transactionsList){
                 if (transactionList.getTransactionType().equals(TransactionType.BUY)){
-                    BigDecimal priceList = transactionList.getTotalAmount();
+                    BigDecimal priceList = transactionList.getPrice();
                     BigDecimal quantityList = transactionList.getQuantity();
-                // **Sort the splitsList by splitDate in ascending order**
                 if (splitsList != null) {
-                    splitsList.sort(Comparator.comparing(Splits::getSplitDate));
                     for (Splits splits : splitsList) {
-                        Date dateSplit = splits.getSplitDate();
-                        if (transactionList.getDate().before(dateSplit)) {
+                        if (transactionList.getDate().before(splits.getSplitDate())) {
                             priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
                             quantityList = quantityList.multiply(splits.getRatioSplit());
                         }
@@ -77,20 +74,18 @@ public class HoldingServiceImpl implements HoldingsService {
                 quantity = quantity.add(quantityList);
                 totalPrice = totalPrice.add(priceList);
                 } else if (transactionList.getTransactionType().equals(TransactionType.SELL)) {
-                    BigDecimal priceList = transactionList.getTotalAmount();
+                    BigDecimal priceList = transactionList.getPrice();
                     BigDecimal quantityList = transactionList.getQuantity();
                     if (splitsList != null) {
-                        splitsList.sort(Comparator.comparing(Splits::getSplitDate));
                         for (Splits splits : splitsList) {
-                            Date dateSplit = splits.getSplitDate();
-                            if (transactionList.getDate().before(dateSplit)) {
+                            if (transactionList.getDate().before(splits.getSplitDate())) {
                                 priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
                                 quantityList = quantityList.multiply(splits.getRatioSplit());
                             }
                         }
                     }
                     quantity = quantity.subtract(quantityList);
-                    totalPrice = totalPrice.subtract(priceList);
+                    totalPrice = totalPrice.subtract(priceList);//TODO find correct way to calculate avg price if 10 stock - 1 stock and 10 stock - 10 stock + 1 stock
                 }
             }
             BigDecimal avgPrice = totalPrice.divide(quantity, MATH_CONTEXT);
@@ -104,8 +99,20 @@ public class HoldingServiceImpl implements HoldingsService {
             newHolding.setPortfolioId(portfolioId);
             newHolding.setAssetType(transaction.getAssetType());
             newHolding.setTicker(transaction.getTicker().toUpperCase());
-            newHolding.setQuantity(transaction.getQuantity());
-            newHolding.setAveragePurchasePrice(transaction.getPrice());
+            MarketData marketData = marketDataRepository.findByTicker(transaction.getTicker().toUpperCase());
+            List<Splits> splitsList = marketData.getSplits();
+            BigDecimal priceList = transaction.getPrice();
+            BigDecimal quantityList = transaction.getQuantity();
+            if (splitsList != null) {
+                for (Splits splits : splitsList) {
+                    if (transaction.getDate().before(splits.getSplitDate())) {
+                        priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
+                        quantityList = quantityList.multiply(splits.getRatioSplit());
+                    }
+                }
+            }
+            newHolding.setQuantity(quantityList);
+            newHolding.setAveragePurchasePrice(priceList);
             newHolding.setCreatedAt(transaction.getDate());
             newHolding.setUpdatedAt(transaction.getDate());
             holdingsRepository.save(newHolding);

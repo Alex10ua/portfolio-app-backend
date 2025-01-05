@@ -29,6 +29,7 @@ public class Transactions {
     private TransactionType transactionType;
     private BigDecimal quantity;
     private BigDecimal price;
+    private BigDecimal amount;//for dividends transaction
     private BigDecimal totalAmount;
     private BigDecimal commission;
 }
