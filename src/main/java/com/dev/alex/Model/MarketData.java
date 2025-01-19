@@ -31,6 +31,7 @@ public class MarketData {
     private List<Splits> splits;
     private String country;
     private String sector;
+    private String industry;
     private Date updatedAt;
 
     public MarketData(BigDecimal price, Date updatedAt, String ticker) {
