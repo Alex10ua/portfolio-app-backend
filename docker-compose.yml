@@ -9,7 +9,7 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - "data:/data/db"
+      - "mongodb:/data/db"
     #volumes:
     #  - type: bind
     #  - source: "data"
@@ -27,4 +27,5 @@ services:
   #https://github.com/minio/minio/blob/master/docs/orchestration/docker-compose/docker-compose.yaml
   #S3 alternative to store image assets
 volumes:
-  data:
+  mongodb:
+#    external: true
