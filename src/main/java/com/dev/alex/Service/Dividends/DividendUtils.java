@@ -11,6 +11,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -29,12 +31,12 @@ public class DividendUtils {
         //get div date and check all transaction how much stock is present at that time
         for (Dividend dividend:dividendList){
             BigDecimal totalStock = ZERO;
-            Date dividendDate = dividend.getDividendDate();
+            LocalDate dividendDate = dividend.getDividendDate();
             for (Transactions transaction:transactionsList){
-                if(transaction.getTransactionType().equals(TransactionType.BUY) && transaction.getDate().before(dividendDate)){
+                if(transaction.getTransactionType().equals(TransactionType.BUY) && transaction.getDate().isBefore(dividendDate)){
                     if (splitsList != null){
                         for (Splits split:splitsList){
-                            if (split.getSplitDate().after(transaction.getDate()) && split.getSplitDate().before(dividendDate)){
+                            if (split.getSplitDate().isAfter(transaction.getDate()) && split.getSplitDate().isBefore(dividendDate)){
                                 compareResult = totalStock.compareTo(ZERO);
                                 if (compareResult == 0 ) {
                                     totalStock = totalStock.add(transaction.getQuantity().multiply(split.getRatioSplit()));
@@ -50,13 +52,13 @@ public class DividendUtils {
                     } else {
                         totalStock = totalStock.add(transaction.getQuantity());
                     }
-                } else if (transaction.getTransactionType().equals(TransactionType.SELL) && transaction.getDate().before(dividendDate)) {
+                } else if (transaction.getTransactionType().equals(TransactionType.SELL) && transaction.getDate().isBefore(dividendDate)) {
                     if(totalStock.equals(ZERO)){
                         throw new IllegalArgumentException("More sell than buy");
                     }
                     if (splitsList != null){
                         for (Splits split:splitsList){
-                            if (split.getSplitDate().after(transaction.getDate()) && split.getSplitDate().before(dividendDate)){
+                            if (split.getSplitDate().isAfter(transaction.getDate()) && split.getSplitDate().isBefore(dividendDate)){
                                 compareResult = totalStock.compareTo(ZERO);
                                 if (compareResult == 0) {
                                     totalStock = totalStock.subtract(transaction.getQuantity().multiply(split.getRatioSplit()));
@@ -94,7 +96,7 @@ public class DividendUtils {
     @Deprecated
     @Description("Change to calculateDividendsPerMonth after div transaction implementation")
     public Map<String, BigDecimal> calculateDividendsPerMonthAuto(Map<String, List<Transactions>> transactionsList, Map<String, List<Dividend>> dividendLists, Map<String, List<Splits>> splitsLists, List<String> holdings){
-        SimpleDateFormat outputFormat = new SimpleDateFormat("yyyy-MM");
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM");
         Map<String, BigDecimal> monthDividendsMap = new HashMap<>();
         int compareResult;
         for (String holding:holdings){
@@ -102,14 +104,14 @@ public class DividendUtils {
            List<Transactions> transactionList = transactionsList.get(holding);
            List<Splits> splitsList = splitsLists.get(holding);
            for (Dividend dividend:dividendList){
-                Date dividendDate = dividend.getDividendDate();
+                LocalDate dividendDate = dividend.getDividendDate();
                 BigDecimal totalStock = ZERO;
                 BigDecimal divAmount;
                 for (Transactions transaction:transactionList){
-                    if (transaction.getTransactionType().equals(TransactionType.BUY) && transaction.getDate().before(dividendDate)){
+                    if (transaction.getTransactionType().equals(TransactionType.BUY) && transaction.getDate().isBefore(dividendDate)){
                         if (splitsList != null) {
                            for (Splits split : splitsList) {
-                                if (split.getSplitDate().after(transaction.getDate()) && split.getSplitDate().before(dividendDate)){
+                                if (split.getSplitDate().isAfter(transaction.getDate()) && split.getSplitDate().isBefore(dividendDate)){
                                     compareResult = totalStock.compareTo(ZERO);
                                     if (compareResult == 0){
                                         totalStock = totalStock.add(transaction.getQuantity().multiply(split.getRatioSplit()));
@@ -125,13 +127,13 @@ public class DividendUtils {
                         }else {
                             totalStock = totalStock.add(transaction.getQuantity());
                         }
-                    } else if (transaction.getTransactionType().equals(TransactionType.SELL) && transaction.getDate().before(dividendDate)) {
+                    } else if (transaction.getTransactionType().equals(TransactionType.SELL) && transaction.getDate().isBefore(dividendDate)) {
                         if(totalStock.equals(ZERO)){
                             throw new IllegalArgumentException("More sell than buy");
                         }
                         if (splitsList != null){
                             for (Splits split:splitsList){
-                                if (split.getSplitDate().after(transaction.getDate()) && split.getSplitDate().before(dividendDate)){
+                                if (split.getSplitDate().isAfter(transaction.getDate()) && split.getSplitDate().isBefore(dividendDate)){
                                     compareResult = totalStock.compareTo(ZERO);
                                     if (compareResult == 0){
                                         totalStock = totalStock.subtract(transaction.getQuantity().multiply(split.getRatioSplit()));
@@ -153,7 +155,7 @@ public class DividendUtils {
                compareResult = totalStock.compareTo(ZERO);
                if (compareResult > 0){
                     divAmount = totalStock.multiply(dividend.getDividendAmount());
-                    String formattedDateStr = outputFormat.format(dividendDate);
+                    String formattedDateStr = dividendDate.format(formatter);
                      // Add to the map
                     monthDividendsMap.merge(formattedDateStr, divAmount, BigDecimal::add);
                }
