@@ -49,74 +49,81 @@ public class HoldingServiceImpl implements HoldingsService {
     }
 
     @Override
-    public void updateOrCreateHoldingInPortfolio(String portfolioId, Transactions transaction) {
-        Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());
-        if (holding != null) {
-            //create engagement  to holding calculate all variables
-            List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());
-            MarketData marketData = marketDataRepository.findByTicker(transaction.getTicker().toUpperCase());
-            BigDecimal totalPrice = ZERO;
-            BigDecimal quantity = ZERO;
-            List<Splits> splitsList = marketData.getSplits();
-            for (Transactions transactionList : transactionsList){
-                if (transactionList.getTransactionType().equals(TransactionType.BUY)){
-                    BigDecimal priceList = transactionList.getPrice();
-                    BigDecimal quantityList = transactionList.getQuantity();
-                if (splitsList != null) {
-                    for (Splits splits : splitsList) {
-                        if (transactionList.getDate().before(splits.getSplitDate())) {
-                            priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
-                            quantityList = quantityList.multiply(splits.getRatioSplit());
-                        }
-                    }
-                }
+    public void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction) {
+        Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
 
-                quantity = quantity.add(quantityList);
-                totalPrice = totalPrice.add(priceList);
-                } else if (transactionList.getTransactionType().equals(TransactionType.SELL)) {
-                    BigDecimal priceList = transactionList.getPrice();
-                    BigDecimal quantityList = transactionList.getQuantity();
-                    if (splitsList != null) {
-                        for (Splits splits : splitsList) {
-                            if (transactionList.getDate().before(splits.getSplitDate())) {
-                                priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
-                                quantityList = quantityList.multiply(splits.getRatioSplit());
-                            }
-                        }
-                    }
-                    quantity = quantity.subtract(quantityList);
-                    totalPrice = totalPrice.subtract(priceList);//TODO find correct way to calculate avg price if 10 stock - 1 stock and 10 stock - 10 stock + 1 stock
-                }
-            }
-            BigDecimal avgPrice = totalPrice.divide(quantity, MATH_CONTEXT);
-
-            holdingsRepository.updateAveragePurchasePriceAndQuantity(holding.getHoldingId(), avgPrice, quantity);
-
-        }
-        else {
+        if (holding == null) {
             Holdings newHolding = new Holdings();
             newHolding.setHoldingId(UUID.randomUUID().toString());
             newHolding.setPortfolioId(portfolioId);
-            newHolding.setAssetType(transaction.getAssetType());
-            newHolding.setTicker(transaction.getTicker().toUpperCase());
-            MarketData marketData = marketDataRepository.findByTicker(transaction.getTicker().toUpperCase());
-            List<Splits> splitsList = marketData.getSplits();
-            BigDecimal priceList = transaction.getPrice();
-            BigDecimal quantityList = transaction.getQuantity();
+            newHolding.setAssetType(newTransaction.getAssetType());
+            newHolding.setTicker(newTransaction.getTicker().toUpperCase());
+            newHolding.setQuantity(BigDecimal.ZERO);
+            newHolding.setAveragePurchasePrice(BigDecimal.ZERO);
+            newHolding.setCreatedAt(newTransaction.getDate());
+            newHolding.setUpdatedAt(newTransaction.getDate());
+            holdingsRepository.save(newHolding);
+
+            holding = newHolding;
+        }
+
+        List<Transactions> transactionsList =
+                transactionService.findAllByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        BigDecimal totalShares = BigDecimal.ZERO;
+        BigDecimal totalCost   = BigDecimal.ZERO;
+        MarketData marketData = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
+        List<Splits> splitsList = (marketData != null) ? marketData.getSplits() : null;
+
+        for (Transactions tx : transactionsList) {
+            BigDecimal txQuantity = tx.getQuantity();
+            BigDecimal txPrice    = tx.getPrice();
+
             if (splitsList != null) {
-                for (Splits splits : splitsList) {
-                    if (transaction.getDate().before(splits.getSplitDate())) {
-                        priceList = priceList.divide(splits.getRatioSplit(), MATH_CONTEXT);
-                        quantityList = quantityList.multiply(splits.getRatioSplit());
+                for (Splits split : splitsList) {
+                    if (tx.getDate().isBefore(split.getSplitDate())) {
+                        txPrice    = txPrice.divide(split.getRatioSplit(), MATH_CONTEXT);
+                        txQuantity = txQuantity.multiply(split.getRatioSplit());
                     }
                 }
             }
-            newHolding.setQuantity(quantityList);
-            newHolding.setAveragePurchasePrice(priceList);
-            newHolding.setCreatedAt(transaction.getDate());
-            newHolding.setUpdatedAt(transaction.getDate());
-            holdingsRepository.save(newHolding);
+
+            if (tx.getTransactionType().equals(TransactionType.BUY)) {
+                totalShares = totalShares.add(txQuantity);
+                BigDecimal buyCost = txPrice.multiply(txQuantity, MATH_CONTEXT);
+                totalCost   = totalCost.add(buyCost);
+
+            } else if (tx.getTransactionType().equals(TransactionType.SELL)) {
+                if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal averageCost = totalCost.divide(totalShares, MATH_CONTEXT);
+                    totalShares = totalShares.subtract(txQuantity);
+                    BigDecimal soldCost = averageCost.multiply(txQuantity, MATH_CONTEXT);
+                    totalCost = totalCost.subtract(soldCost);
+
+                } else {
+                    throw new RuntimeException("Selling more shares than available");
+                }
+            }
         }
+        BigDecimal finalAvgPrice;
+        if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
+            finalAvgPrice = totalCost.divide(totalShares, MATH_CONTEXT);
+        } else {
+            // If no shares are left, average price might be zero or the last known cost
+            finalAvgPrice = BigDecimal.ZERO;
+        }
+
+        holding.setQuantity(totalShares);
+        holding.setAveragePurchasePrice(finalAvgPrice);
+        holding.setUpdatedAt(newTransaction.getDate());
+
+        holdingsRepository.save(holding);
+        // remove if 0 shares
+        holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        if (holding.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
+            holdingsRepository.delete(holding);
+        }
+
     }
 
 }

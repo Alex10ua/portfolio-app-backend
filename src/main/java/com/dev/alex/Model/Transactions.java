@@ -1,6 +1,7 @@
 package com.dev.alex.Model;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Date;
 
 import org.springframework.data.annotation.Id;
@@ -19,17 +20,16 @@ import lombok.NoArgsConstructor;
 @Data
 public class Transactions {
     @Id
-    private String id;
-    private String portfolioId;
     private String transactionId;
-    private Date date;
+    private String portfolioId;
+    private LocalDate date;
     private Assets assetType;
-    private String assetName;
     private String ticker;
     private TransactionType transactionType;
     private BigDecimal quantity;
     private BigDecimal price;
     private BigDecimal amount;//for dividends transaction
     private BigDecimal totalAmount;
+    private String currency;
     private BigDecimal commission;
 }

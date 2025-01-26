@@ -38,7 +38,7 @@ public class TransactionController {
         transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
         Transactions transactionStatus = transacrionsRepository.save(transaction);
         //need check if ticker exists in portfolio first
-        holdingService.updateOrCreateHoldingInPortfolio(portfolioId, transaction);
+        holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
         Map<String, Object> response = new HashMap<>();
         response.put("save", transactionStatus);
         return ResponseEntity.ok(response);
