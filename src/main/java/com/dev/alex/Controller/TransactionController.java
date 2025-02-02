@@ -2,7 +2,7 @@ package com.dev.alex.Controller;
 
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
-import com.dev.alex.Repository.TransacrionsRepository;
+import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.TransactionServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,7 +23,7 @@ public class TransactionController {
     @Autowired
     private TransactionServiceImpl transactionService;
     @Autowired
-    private TransacrionsRepository transacrionsRepository;
+    private TransactionsRepository transactionsRepository;
     @Autowired
     private HoldingServiceImpl holdingService;
     @Autowired
@@ -36,7 +36,7 @@ public class TransactionController {
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
         transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
-        Transactions transactionStatus = transacrionsRepository.save(transaction);
+        Transactions transactionStatus = transactionsRepository.save(transaction);
         //need check if ticker exists in portfolio first
         holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
         Map<String, Object> response = new HashMap<>();
@@ -56,8 +56,8 @@ public class TransactionController {
     }
     @DeleteMapping("/{portfolioId}/transactions/{transactionId}/delete")
     public ResponseEntity<Map<String, Boolean>> deleteTransaction(@PathVariable String transactionId){
-        Transactions transaction = transacrionsRepository.findById(transactionId).orElseThrow(RuntimeException::new);
-        transacrionsRepository.deleteById(transactionId);
+        Transactions transaction = transactionsRepository.findById(transactionId).orElseThrow(RuntimeException::new);
+        transactionsRepository.deleteById(transactionId);
         Map<String, Boolean> response = new HashMap<>();
         response.put("deleted", Boolean.TRUE);
         return ResponseEntity.ok(response);

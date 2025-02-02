@@ -8,7 +8,9 @@ import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.MarketDataRepository;
 import com.dev.alex.Service.Interface.HoldingsService;
+import com.dev.alex.Service.WebCalls.FlaskClientService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -27,6 +29,10 @@ public class HoldingServiceImpl implements HoldingsService {
     private TransactionServiceImpl transactionService;
     @Autowired
     private MarketDataRepository marketDataRepository;
+    @Autowired
+    private TickersServiceImpl tickersService;
+    @Autowired
+    private FlaskClientService flaskClientService;
 
     @Override
     public List<Holdings> getAllHoldingsByPortfolioId(String portfolioId) {
@@ -51,6 +57,25 @@ public class HoldingServiceImpl implements HoldingsService {
     @Override
     public void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction) {
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        MarketData marketDataCheck = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
+        tickersService.saveIfNotExists(newTransaction.getTicker().toUpperCase());
+        if (marketDataCheck == null) {
+            //async call to flask server to get market data
+            try{
+                tickersService.createTicker(newTransaction.getTicker().toUpperCase());
+                ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(newTransaction.getTicker().toUpperCase());
+
+                if (response != null) {
+                    System.out.println("Status Code: " + response.getStatusCode());
+                    System.out.println("Response Body: " + response.getBody());
+                } else {
+                    System.out.println("No response received");
+                }
+            } catch (Exception e) {
+                System.out.println("Error in sync call to flask server: " + e.getMessage());
+            }
+
+        }
 
         if (holding == null) {
             Holdings newHolding = new Holdings();
