@@ -10,6 +10,6 @@ public interface HoldingsService {
     void updateHoldingsByHoldingId(String holdingId);
     void updateHoldingByPortfolioIdAndTickerSymbol(String portfolioId, String tickerSymbol, Holdings holding);
     Holdings findHoldingByPortfolioIdAndTicker(String portfolioId, String tickerSymbol);
-    void updateOrCreateHoldingInPortfolio(String portfolioId, Transactions transaction);
+    void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction);
 
 }

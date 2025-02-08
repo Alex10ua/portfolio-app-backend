@@ -7,3 +7,4 @@ spring.data.mongodb.port=27017
 spring.data.mongodb.host=localhost
 # swagger-ui custom path
 springdoc.swagger-ui.path=/swagger-ui.html
+app.rest.base-url=http://localhost:5000
