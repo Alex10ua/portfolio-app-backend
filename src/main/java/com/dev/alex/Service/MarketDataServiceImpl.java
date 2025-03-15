@@ -29,4 +29,9 @@ public class MarketDataServiceImpl implements MarketDataService {
     public MarketData getMarketDataForHoldingsPage(String ticker) {
         return  marketDataRepository.findByTickerForHoldingsPage(ticker);
     }
+
+    @Override
+    public void saveMarketData(MarketData marketData) {
+        marketDataRepository.save(marketData);
+    }
 }

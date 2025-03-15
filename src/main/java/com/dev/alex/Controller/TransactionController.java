@@ -1,5 +1,6 @@
 package com.dev.alex.Controller;
 
+import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.TransactionsRepository;
@@ -36,9 +37,16 @@ public class TransactionController {
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
         transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
+        transaction.setTicker(transaction.getTicker().toUpperCase());
         Transactions transactionStatus = transactionsRepository.save(transaction);
-        //need check if ticker exists in portfolio first
-        holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
+        if (transaction.getAssetType().equals(Assets.STOCK)){
+            //need check if ticker exists in portfolio first
+            holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
+        }else {
+            //update holding for non stock asset
+            holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
+        }
+
         Map<String, Object> response = new HashMap<>();
         response.put("save", transactionStatus);
         return ResponseEntity.ok(response);

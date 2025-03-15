@@ -75,7 +75,6 @@ public class DividendUtils {
                         totalStock = totalStock.subtract(transaction.getQuantity());
                     }
                 }
-                System.out.println(transaction.getTicker()+" div date:" + dividendDate + " stock present: "+ totalStock);
             }
             compareResult = totalStock.compareTo(ZERO);
             if (compareResult > 0){

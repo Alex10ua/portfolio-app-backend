@@ -28,6 +28,7 @@ public class DividendsServiceImpl implements DividendsService {
 
     @Override
     public DividendInfoCompleteData getAllDividendsInfoByPortfolioId(String portfolioId) {
+        //TODO: Implement All time stock dividends only by transaction buy and sell
         DividendInfoCompleteData dividendInfoCompleteData = new DividendInfoCompleteData();
         List<Holdings> allHolding = holdingService.getAllHoldingsByPortfolioId(portfolioId);
         DividendUtils dividendUtils = new DividendUtils();
