@@ -28,6 +28,7 @@ public class DividendsServiceImpl implements DividendsService {
 
     @Override
     public DividendInfoCompleteData getAllDividendsInfoByPortfolioId(String portfolioId) {
+        //TODO: Implement All time stock dividends only by transaction buy and sell
         DividendInfoCompleteData dividendInfoCompleteData = new DividendInfoCompleteData();
         List<Holdings> allHolding = holdingService.getAllHoldingsByPortfolioId(portfolioId);
         DividendUtils dividendUtils = new DividendUtils();
@@ -36,29 +37,33 @@ public class DividendsServiceImpl implements DividendsService {
         Map<String, List<Transactions>> holdingsTransactions = new HashMap<>();
         Map<String, List<Splits>> holdingsSplits = new HashMap<>();
         List<String> tickers = new ArrayList<>();
-
+        BigDecimal allYearlyDividends = BigDecimal.ZERO;
 
         for (Holdings holding : allHolding){
-            tickers.add(holding.getTicker());
-            //get from holdings list of transaction for stock in holding
-            List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, holding.getTicker());
-            holdingsTransactions.put(holding.getTicker(),transactionsList);//map for calculation of dividends by month
             //get market data dividends for stock
             MarketData marketData = marketDataService.getMarketDataByTicker((holding.getTicker()));
-            List<Dividend> dividendList = marketData.getDividends();
-            List<Splits> splitsList = marketData.getSplits();
-            holdingsDividends.put(holding.getTicker(), dividendList);
-            holdingsSplits.put(holding.getTicker(), splitsList);
-            //move to DividendsUtils
-            BigDecimal divForStock = dividendUtils.calculateAllDividendsByStockAuto(dividendList, transactionsList, splitsList);
-            Map<String, BigDecimal> allDivForStock = new HashMap<>();
-            allDivForStock.put(holding.getTicker(), divForStock);
-            divMapList.add(allDivForStock);
-
+            if (!marketData.getDividends().isEmpty()){
+                tickers.add(holding.getTicker());
+                //get from holdings list of transaction for stock in holding
+                List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, holding.getTicker());
+                holdingsTransactions.put(holding.getTicker(),transactionsList);//map for calculation of dividends by month
+                List<Dividend> dividendList = marketData.getDividends();
+                List<Splits> splitsList = marketData.getSplits();
+                holdingsDividends.put(holding.getTicker(), dividendList);
+                holdingsSplits.put(holding.getTicker(), splitsList);
+                allYearlyDividends = allYearlyDividends.add(marketData.getYearlyDividend().multiply(holding.getQuantity()));
+                //move to DividendsUtils
+                BigDecimal divForStock = dividendUtils.calculateAllDividendsByStockAuto(dividendList, transactionsList, splitsList);
+                Map<String, BigDecimal> allDivForStock = new HashMap<>();
+                allDivForStock.put(holding.getTicker(), divForStock);
+                divMapList.add(allDivForStock);
+            }
         }
-        dividendInfoCompleteData.setTickerAmount(divMapList);
-        dividendInfoCompleteData.setAmountByMonth(dividendUtils.calculateDividendsPerMonthAuto(holdingsTransactions, holdingsDividends, holdingsSplits, tickers));
-
+        if (!holdingsDividends.isEmpty()) {
+            dividendInfoCompleteData.setTickerAmount(divMapList);
+            dividendInfoCompleteData.setAmountByMonth(dividendUtils.calculateDividendsPerMonthAuto(holdingsTransactions, holdingsDividends, holdingsSplits, tickers));
+            dividendInfoCompleteData.setYearlyCombineDividendsProjection(allYearlyDividends);
+        }
         return dividendInfoCompleteData;
     }
 }

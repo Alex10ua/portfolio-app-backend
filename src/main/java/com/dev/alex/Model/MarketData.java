@@ -1,6 +1,7 @@
 package com.dev.alex.Model;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
 
@@ -31,9 +32,10 @@ public class MarketData {
     private List<Splits> splits;
     private String country;
     private String sector;
-    private Date updatedAt;
+    private String industry;
+    private LocalDate updatedAt;
 
-    public MarketData(BigDecimal price, Date updatedAt, String ticker) {
+    public MarketData(BigDecimal price, LocalDate updatedAt, String ticker) {
         this.price = price;
         this.updatedAt = updatedAt;
         this.ticker = ticker;

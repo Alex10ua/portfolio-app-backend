@@ -16,5 +16,5 @@ public class DividendInfoCompleteData {
     List<Map<String, BigDecimal>> tickerAmount;
     // where string ticker bigdecimal amount
     Map<String, BigDecimal> amountByMonth;
-
+    BigDecimal yearlyCombineDividendsProjection;
 }
