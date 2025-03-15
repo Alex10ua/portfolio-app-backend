@@ -23,8 +23,10 @@ public class Holdings {
     private String portfolioId;
     private Assets assetType;
     private String ticker;
+    private String name;
     private BigDecimal quantity;
     private BigDecimal averagePurchasePrice;
+    private BigDecimal priceNow; // for non stock assets to have current price
     private LocalDate createdAt;
     private LocalDate updatedAt;
 

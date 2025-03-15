@@ -83,7 +83,7 @@ public class HoldingServiceImpl implements HoldingsService {
             newHolding.setPortfolioId(portfolioId);
             newHolding.setAssetType(newTransaction.getAssetType());
             newHolding.setTicker(newTransaction.getTicker().toUpperCase());
-            newHolding.setQuantity(BigDecimal.ZERO);
+            newHolding.setQuantity(newTransaction.getQuantity());
             newHolding.setAveragePurchasePrice(BigDecimal.ZERO);
             newHolding.setCreatedAt(newTransaction.getDate());
             newHolding.setUpdatedAt(newTransaction.getDate());
@@ -149,6 +149,75 @@ public class HoldingServiceImpl implements HoldingsService {
             holdingsRepository.delete(holding);
         }
 
+    }
+
+    @Override
+    public void updateOrCreateCustomHoldingInPortfolio(String portfolioId, Transactions newTransaction) {
+        Holdings holdings = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        if (holdings == null){
+            Holdings newHolding = new Holdings();
+            newHolding.setHoldingId(UUID.randomUUID().toString());
+            newHolding.setPortfolioId(portfolioId);
+            newHolding.setAssetType(newTransaction.getAssetType());
+            newHolding.setTicker(newTransaction.getTicker().toUpperCase());
+            newHolding.setName(newTransaction.getName());
+            newHolding.setQuantity(newTransaction.getQuantity());
+            newHolding.setAveragePurchasePrice(BigDecimal.ZERO);
+            newHolding.setPriceNow(newTransaction.getPriceNow() != null ? newTransaction.getPriceNow() : BigDecimal.ZERO);
+            newHolding.setCreatedAt(newTransaction.getDate());
+            newHolding.setUpdatedAt(newTransaction.getDate());
+            holdingsRepository.save(newHolding);
+            holdings = newHolding;
+        }
+
+        List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        BigDecimal totalShares = BigDecimal.ZERO;
+        BigDecimal totalCost   = BigDecimal.ZERO;
+        for (Transactions transaction : transactionsList){
+            if (transaction.getTransactionType().equals(TransactionType.BUY)){
+                totalShares = totalShares.add(transaction.getQuantity());
+                BigDecimal buyCost = transaction.getPrice().multiply(transaction.getQuantity());
+                totalCost = totalCost.add(buyCost);
+            } else if (transaction.getTransactionType().equals(TransactionType.SELL)){
+                if (totalShares.compareTo(BigDecimal.ZERO) > 0){
+                    BigDecimal averageCost = totalCost.divide(totalShares, MATH_CONTEXT);
+                    totalShares = totalShares.subtract(transaction.getQuantity());
+                    BigDecimal soldCost = averageCost.multiply(transaction.getQuantity());
+                    totalCost = totalCost.subtract(soldCost);
+                } else {
+                    throw new RuntimeException("Selling more than available");
+                }
+            }
+        }
+        BigDecimal finalAvgPrice;
+        if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
+            finalAvgPrice = totalCost.divide(totalShares, MATH_CONTEXT);
+        } else {
+            // If no shares are left, average price might be zero or the last known cost
+            finalAvgPrice = BigDecimal.ZERO;
+        }
+
+        holdings.setQuantity(totalShares);
+        holdings.setAveragePurchasePrice(finalAvgPrice);
+        holdings.setUpdatedAt(newTransaction.getDate());
+        holdingsRepository.save(holdings);
+        //MarketData creation for custom holdings
+        MarketData marketData = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
+        if (marketData == null){
+            MarketData newMarketData = new MarketData();
+            newMarketData.setTicker(newTransaction.getTicker().toUpperCase());
+            newMarketData.setName(newTransaction.getName());
+            newMarketData.setPrice(newTransaction.getPriceNow());
+            newMarketData.setUpdatedAt(newTransaction.getDate());
+            marketDataRepository.save(newMarketData);
+        }
+
+        // remove if 0 shares
+        Holdings holdingZero = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        if (holdingZero.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
+            holdingsRepository.delete(holdingZero);
+        }
     }
 
 }
