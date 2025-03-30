@@ -7,6 +7,7 @@ import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Service.Interface.HoldingsCompleteDataService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import com.dev.alex.Model.Enums.Assets;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
@@ -26,28 +27,31 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
     private HoldingServiceImpl holdingService;
     @Autowired
     private MarketDataServiceImpl marketDataService;
+
     @Override
     public List<HoldingsCompleteData> getAllHoldingsByPortfolioId(String portfolioId) {
 
         List<HoldingsCompleteData> holdingsCompleteDataList = new ArrayList<>();
         List<Holdings> allHolding = holdingService.getAllHoldingsByPortfolioId(portfolioId);
-        for (Holdings holding : allHolding){
+        for (Holdings holding : allHolding) {
             HoldingsCompleteData holdingsCompleteData = new HoldingsCompleteData();
-            if (holding.getAssetType().equals("STOCK")){
+            if (holding.getAssetType() == Assets.STOCK) {
 
-
-                MarketData marketData = marketDataService.getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
-                if (marketData.getPrice() == null || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0){
+                MarketData marketData = marketDataService
+                        .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
+                if (marketData.getPrice() == null || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0) {
                     throw new IllegalArgumentException("Price must not be null or zero.");
                 }
                 BigDecimal divisionResult;
                 BigDecimal dividedYieldPercentage;
                 holdingsCompleteData.setTicker(holding.getTicker().toUpperCase());
                 holdingsCompleteData.setShareAmount(holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
-                holdingsCompleteData.setCostPerShare(holding.getAveragePurchasePrice().setScale(2, RoundingMode.HALF_EVEN));
+                holdingsCompleteData
+                        .setCostPerShare(holding.getAveragePurchasePrice().setScale(2, RoundingMode.HALF_EVEN));
                 BigDecimal costBasicTotalShare = holding.getAveragePurchasePrice().multiply(holding.getQuantity());
                 holdingsCompleteData.setCostBasis(costBasicTotalShare.setScale(2, RoundingMode.HALF_EVEN));
-                BigDecimal currentTotalValueShares = (holding.getQuantity().multiply(marketData.getPrice())).setScale(2, RoundingMode.HALF_EVEN);
+                BigDecimal currentTotalValueShares = (holding.getQuantity().multiply(marketData.getPrice())).setScale(2,
+                        RoundingMode.HALF_EVEN);
                 holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
                 holdingsCompleteData.setCurrentShareValue(marketData.getPrice().setScale(2, RoundingMode.HALF_EVEN));
                 if (marketData.getYearlyDividend() != null) {
@@ -56,36 +60,46 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                     dividedYieldPercentage = divisionResult.multiply(HUNDRED);
                     holdingsCompleteData.setDividendYield(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
 
-                    divisionResult = marketData.getYearlyDividend().divide(holding.getAveragePurchasePrice(), MATH_CONTEXT);
+                    divisionResult = marketData.getYearlyDividend().divide(holding.getAveragePurchasePrice(),
+                            MATH_CONTEXT);
                     dividedYieldPercentage = divisionResult.multiply(HUNDRED);
-                    holdingsCompleteData.setDividendYieldOnCost(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
+                    holdingsCompleteData
+                            .setDividendYieldOnCost(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
                 }
-                BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(2, RoundingMode.HALF_EVEN);
+                BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(2,
+                        RoundingMode.HALF_EVEN);
                 holdingsCompleteData.setTotalProfit(totalProfit);
 
                 divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
                 dividedYieldPercentage = divisionResult.multiply(HUNDRED);
-                holdingsCompleteData.setTotalProfitPercentage(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
-                holdingsCompleteData.setDailyChange(marketData.getPrice().subtract(marketData.getPriceYesterday()).setScale(2,RoundingMode.HALF_EVEN));
+                holdingsCompleteData
+                        .setTotalProfitPercentage(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
+                holdingsCompleteData.setDailyChange(marketData.getPrice().subtract(marketData.getPriceYesterday())
+                        .setScale(2, RoundingMode.HALF_EVEN));
                 holdingsCompleteDataList.add(holdingsCompleteData);
-            } else  {
+            } else {
                 holdingsCompleteData.setTicker(holding.getTicker());
                 holdingsCompleteData.setShareAmount(holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
-                holdingsCompleteData.setCostPerShare(holding.getAveragePurchasePrice().setScale(2, RoundingMode.HALF_EVEN));
+                holdingsCompleteData
+                        .setCostPerShare(holding.getAveragePurchasePrice().setScale(2, RoundingMode.HALF_EVEN));
                 BigDecimal costBasicTotalShare = holding.getAveragePurchasePrice().multiply(holding.getQuantity());
                 holdingsCompleteData.setCostBasis(costBasicTotalShare.setScale(2, RoundingMode.HALF_EVEN));
-                MarketData marketData = marketDataService.getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
-                if (marketData.getPrice() == null || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0){
+                MarketData marketData = marketDataService
+                        .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
+                if (marketData.getPrice() == null || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0) {
                     throw new IllegalArgumentException("Price must not be null or zero.");
                 }
-                BigDecimal currentTotalValueShares = (holding.getQuantity().multiply(marketData.getPrice())).setScale(2, RoundingMode.HALF_EVEN);
+                BigDecimal currentTotalValueShares = (holding.getQuantity().multiply(marketData.getPrice())).setScale(2,
+                        RoundingMode.HALF_EVEN);
                 holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
                 holdingsCompleteData.setCurrentShareValue(marketData.getPrice().setScale(2, RoundingMode.HALF_EVEN));
-                BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(2, RoundingMode.HALF_EVEN);
+                BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(2,
+                        RoundingMode.HALF_EVEN);
                 holdingsCompleteData.setTotalProfit(totalProfit);
                 BigDecimal divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
                 BigDecimal dividedYieldPercentage = divisionResult.multiply(HUNDRED);
-                holdingsCompleteData.setTotalProfitPercentage(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
+                holdingsCompleteData
+                        .setTotalProfitPercentage(dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
                 holdingsCompleteDataList.add(holdingsCompleteData);
             }
         }
