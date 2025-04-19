@@ -1,5 +1,6 @@
 package com.dev.alex.Model;
 
+import java.time.LocalDate;
 import java.util.Date;
 
 import org.springframework.data.annotation.Id;
@@ -21,11 +22,13 @@ public class Portfolios {
     private String description;
     private Date createdAt;
     private Date updatedAt;
+    private LocalDate firstTradeYear;
 
-    public Portfolios(String portfolioName, String description, Date createdAt, Date updatedAt) {
+    public Portfolios(String portfolioName, String description, Date createdAt, Date updatedAt, LocalDate firstTradeYear) {
         this.portfolioName = portfolioName;
         this.description = description;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.firstTradeYear = firstTradeYear;
     }
 }
