@@ -8,4 +8,5 @@ public interface TransactionService {
     void createTransactions(List<Transactions> transactions);
     List<Transactions> findAllByPortfolioId(String portfolioId);
     List<Transactions> findAllByPortfolioIdAndTicker(String portfolioId, String ticker);
+    List<Transactions> findAllByPortfolioIdAndYear(String portfolioId, int year);
 }

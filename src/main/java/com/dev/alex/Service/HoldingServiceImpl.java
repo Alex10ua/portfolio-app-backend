@@ -4,9 +4,11 @@ import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.Splits;
+import com.dev.alex.Model.Portfolios;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.MarketDataRepository;
+import com.dev.alex.Repository.PortfolioRepository;
 import com.dev.alex.Service.Interface.HoldingsService;
 import com.dev.alex.Service.WebCalls.FlaskClientService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.util.*;
 
 @Service
@@ -33,6 +36,8 @@ public class HoldingServiceImpl implements HoldingsService {
     private TickersServiceImpl tickersService;
     @Autowired
     private FlaskClientService flaskClientService;
+    @Autowired
+    private PortfolioRepository portfolioRepository;
 
     @Override
     public List<Holdings> getAllHoldingsByPortfolioId(String portfolioId) {
@@ -57,8 +62,19 @@ public class HoldingServiceImpl implements HoldingsService {
     @Override
     public void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction) {
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        System.out.println("Inside updateOrCreateHoldingInPortfolioUpdated");
         MarketData marketDataCheck = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
         tickersService.saveIfNotExists(newTransaction.getTicker().toUpperCase());
+        Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
+        if (portfolio.getFirstTradeYear() == null) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        } else if (portfolio.getFirstTradeYear().isAfter(newTransaction.getDate())) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        }
         if (marketDataCheck == null) {
             //async call to flask server to get market data
             try{
@@ -154,6 +170,16 @@ public class HoldingServiceImpl implements HoldingsService {
     @Override
     public void updateOrCreateCustomHoldingInPortfolio(String portfolioId, Transactions newTransaction) {
         Holdings holdings = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
+        if (portfolio.getFirstTradeYear() == null) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        } else if (portfolio.getFirstTradeYear().isAfter(newTransaction.getDate())) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        }
         if (holdings == null){
             Holdings newHolding = new Holdings();
             newHolding.setHoldingId(UUID.randomUUID().toString());

@@ -56,6 +56,10 @@ public class TransactionController {
     public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId){
         return transactionService.findAllByPortfolioId(portfolioId);
     }
+    @GetMapping("/{portfolioId}/transactions/{year}")
+    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year){
+        return transactionService.findAllByPortfolioIdAndYear(portfolioId, year);
+    }
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
     public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions transaction, @PathVariable String transactionId){
         Transactions updatedTransaction;
