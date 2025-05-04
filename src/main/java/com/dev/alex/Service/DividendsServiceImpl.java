@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.Dividend;
@@ -41,22 +42,24 @@ public class DividendsServiceImpl implements DividendsService {
 
         for (Holdings holding : allHolding){
             //get market data dividends for stock
-            MarketData marketData = marketDataService.getMarketDataByTicker((holding.getTicker()));
-            if (!marketData.getDividends().isEmpty()){
-                tickers.add(holding.getTicker());
-                //get from holdings list of transaction for stock in holding
-                List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, holding.getTicker());
-                holdingsTransactions.put(holding.getTicker(),transactionsList);//map for calculation of dividends by month
-                List<Dividend> dividendList = marketData.getDividends();
-                List<Splits> splitsList = marketData.getSplits();
-                holdingsDividends.put(holding.getTicker(), dividendList);
-                holdingsSplits.put(holding.getTicker(), splitsList);
-                allYearlyDividends = allYearlyDividends.add(marketData.getYearlyDividend().multiply(holding.getQuantity()));
-                //move to DividendsUtils
-                BigDecimal divForStock = dividendUtils.calculateAllDividendsByStockAuto(dividendList, transactionsList, splitsList);
-                Map<String, BigDecimal> allDivForStock = new HashMap<>();
-                allDivForStock.put(holding.getTicker(), divForStock);
-                divMapList.add(allDivForStock);
+            if (holding.getAssetType().equals(Assets.STOCK)){
+                MarketData marketData = marketDataService.getMarketDataByTicker((holding.getTicker()));
+                if (!marketData.getDividends().isEmpty()){
+                    tickers.add(holding.getTicker());
+                    //get from holdings list of transaction for stock in holding
+                    List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, holding.getTicker());
+                    holdingsTransactions.put(holding.getTicker(),transactionsList);//map for calculation of dividends by month
+                    List<Dividend> dividendList = marketData.getDividends();
+                    List<Splits> splitsList = marketData.getSplits();
+                    holdingsDividends.put(holding.getTicker(), dividendList);
+                    holdingsSplits.put(holding.getTicker(), splitsList);
+                    allYearlyDividends = allYearlyDividends.add(marketData.getYearlyDividend().multiply(holding.getQuantity()));
+                    //move to DividendsUtils
+                    BigDecimal divForStock = dividendUtils.calculateAllDividendsByStockAuto(dividendList, transactionsList, splitsList);
+                    Map<String, BigDecimal> allDivForStock = new HashMap<>();
+                    allDivForStock.put(holding.getTicker(), divForStock);
+                    divMapList.add(allDivForStock);
+                }
             }
         }
         if (!holdingsDividends.isEmpty()) {

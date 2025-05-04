@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.DiversificationCompleteData;
@@ -31,7 +32,10 @@ public class DiversificationServiceImpl  implements DiversificationService {
         Map<String, BigDecimal> amountBySector = new HashMap<>();
         Map<String, BigDecimal> amountByIndustry = new HashMap<>();
         Map<String, BigDecimal> amountByStock = new HashMap<>();
-        for (Holdings holding:holdings){
+        for (Holdings holding:holdings){ //TODO: update for non stock assets
+            if (holding.getAssetType() != Assets.STOCK) {
+                continue;
+            }
             MarketData marketData = marketDataService.getMarketDataByTicker(holding.getTicker());
             BigDecimal holdingValue = holding.getQuantity().multiply(marketData.getPrice()).setScale(2, RoundingMode.HALF_EVEN);
             amountByCountry.merge(marketData.getCountry(), holdingValue, BigDecimal::add);
@@ -39,10 +43,18 @@ public class DiversificationServiceImpl  implements DiversificationService {
             amountByIndustry.merge(marketData.getIndustry(), holdingValue, BigDecimal::add );
             amountByStock.put(holding.getTicker(), holdingValue);
         }
-        diversificationCompleteData.setAmountByCountry(amountByCountry);
-        diversificationCompleteData.setAmountBySector(amountBySector);
-        diversificationCompleteData.setAmountByIndustry(amountByIndustry);
-        diversificationCompleteData.setAmountByStock(amountByStock);
+        if (!amountByCountry.isEmpty() ){
+            diversificationCompleteData.setAmountByCountry(amountByCountry);
+        }
+        if (!amountBySector.isEmpty()){
+            diversificationCompleteData.setAmountBySector(amountBySector);
+        }
+        if (!amountByIndustry.isEmpty()){
+            diversificationCompleteData.setAmountByIndustry(amountByIndustry);
+        }
+        if (!amountByStock.isEmpty()){
+            diversificationCompleteData.setAmountByStock(amountByStock);
+        }
         return diversificationCompleteData;
     }
 }
