@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@CrossOrigin(origins = "http://localhost:3000")//fix Access-Control-Allow-Origin
+@CrossOrigin(origins = "http://localhost:3001")//fix Access-Control-Allow-Origin
 @RestController
 @RequestMapping("/api/v1")
 public class HoldingController {

@@ -7,4 +7,5 @@ import java.util.List;
 public interface DividendsService {
 
     DividendInfoCompleteData getAllDividendsInfoByPortfolioId(String portfolioId);
+    DividendInfoCompleteData getAllReceivedDividendsInfoFromTransactions(String portfolioId);
 }

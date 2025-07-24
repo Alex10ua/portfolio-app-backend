@@ -64,7 +64,7 @@ public class HoldingServiceImpl implements HoldingsService {
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
         System.out.println("Inside updateOrCreateHoldingInPortfolioUpdated");
         MarketData marketDataCheck = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
-        tickersService.saveIfNotExists(newTransaction.getTicker().toUpperCase());
+        //tickersService.saveIfNotExists(newTransaction.getTicker().toUpperCase());// TODO Table for updating ticker price
         Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
         if (portfolio.getFirstTradeYear() == null) {
             portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB

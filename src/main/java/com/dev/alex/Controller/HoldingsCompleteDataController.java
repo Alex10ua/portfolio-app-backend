@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@CrossOrigin(origins = "http://localhost:3000")//fix Access-Control-Allow-Origin
+@CrossOrigin(origins = "http://localhost:3001")//fix Access-Control-Allow-Origin
 @RequestMapping("/api/v1")
 public class HoldingsCompleteDataController {
     @Autowired
@@ -16,6 +16,6 @@ public class HoldingsCompleteDataController {
 
     @GetMapping("/{portfolioId}")
     public List<HoldingsCompleteData> getAllHoldingsByPortfolioId(@PathVariable String portfolioId) {
-        return holdingsCompleteDataService.getAllHoldingsByPortfolioId(portfolioId);
+        return holdingsCompleteDataService.getAllHoldingsByPortfolioId(portfolioId);// TODO add posibility to modify transaction delete edit and recalculate holdings
     }
 }

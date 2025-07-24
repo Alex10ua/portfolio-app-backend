@@ -19,7 +19,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = "http://localhost:3000")//fix Access-Control-Allow-Origin
+@CrossOrigin(origins = "http://localhost:3001")//fix Access-Control-Allow-Origin
 public class TransactionController {
     @Autowired
     private TransactionServiceImpl transactionService;

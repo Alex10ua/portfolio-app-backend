@@ -14,4 +14,5 @@ public class Dividend {
 
     private LocalDate dividendDate;
     private BigDecimal dividendAmount;
+    private LocalDate  exDividendDate;
 }

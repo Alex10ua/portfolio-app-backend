@@ -5,12 +5,13 @@ import com.dev.alex.Repository.PortfolioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-@CrossOrigin(origins = "http://localhost:3000")//fix Access-Control-Allow-Origin
+@CrossOrigin(origins = "http://localhost:3001")//fix Access-Control-Allow-Origin
 @RestController
 @RequestMapping("/api/v1")
 public class PortfolioController {
@@ -27,7 +28,7 @@ public class PortfolioController {
     public Map<String, Integer> getFirstTradeYear(@PathVariable String portfolioId){
         Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
         Map<String, Integer> response = new HashMap<>();
-        response.put("firstTradeYear", portfolio.getFirstTradeYear().getYear());
+        response.put("firstTradeYear", portfolio.getFirstTradeYear() != null ? portfolio.getFirstTradeYear().getYear() : null);
         return response;
     }
 

@@ -6,7 +6,7 @@ import com.dev.alex.Service.DividendsServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-@CrossOrigin(origins = "http://localhost:3000")//fix Access-Control-Allow-Origin
+@CrossOrigin(origins = "http://localhost:3001")//fix Access-Control-Allow-Origin
 @RestController
 @RequestMapping("/api/v1")
 public class DividendsController {
@@ -15,7 +15,7 @@ public class DividendsController {
 
     @GetMapping("/{portfolioId}/dividends")
     public DividendInfoCompleteData getDividendsInfoByPortfolioId(@PathVariable String portfolioId){
-        return dividendsService.getAllDividendsInfoByPortfolioId(portfolioId);
+        return dividendsService.getAllReceivedDividendsInfoFromTransactions(portfolioId);
     }
 
 }
