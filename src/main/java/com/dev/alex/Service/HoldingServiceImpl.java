@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
@@ -20,7 +21,11 @@ import java.math.MathContext;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.*;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
+@Transactional
 @Service
 public class HoldingServiceImpl implements HoldingsService {
     private static final BigDecimal ZERO = BigDecimal.valueOf(0);
@@ -62,7 +67,7 @@ public class HoldingServiceImpl implements HoldingsService {
     @Override
     public void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction) {
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
-        System.out.println("Inside updateOrCreateHoldingInPortfolioUpdated");
+        log.info("Inside updateOrCreateHoldingInPortfolioUpdated");
         MarketData marketDataCheck = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
         //tickersService.saveIfNotExists(newTransaction.getTicker().toUpperCase());// TODO Table for updating ticker price
         Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
@@ -82,13 +87,13 @@ public class HoldingServiceImpl implements HoldingsService {
                 ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(newTransaction.getTicker().toUpperCase());
 
                 if (response != null) {
-                    System.out.println("Status Code: " + response.getStatusCode());
-                    System.out.println("Response Body: " + response.getBody());
+                    log.info("Status Code: " + response.getStatusCode());
+                    log.info("Response Body: " + response.getBody());
                 } else {
-                    System.out.println("No response received");
+                    log.error("No response received");
                 }
             } catch (Exception e) {
-                System.out.println("Error in sync call to flask server: " + e.getMessage());
+               log.error("Error in sync call to flask server: " + e.getMessage());
             }
 
         }
@@ -243,6 +248,62 @@ public class HoldingServiceImpl implements HoldingsService {
         Holdings holdingZero = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
         if (holdingZero.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
             holdingsRepository.delete(holdingZero);
+        }
+    }
+    @Override
+    public void recalculateHoldingFromTransactions(String portfolioId, String ticker) {
+        BigDecimal totalShares = BigDecimal.ZERO;
+        BigDecimal totalCost   = BigDecimal.ZERO;
+
+        MarketData marketData = marketDataRepository.findByTicker(ticker);
+        List<Transactions> transactions = transactionService.findAllByPortfolioIdAndTicker(portfolioId, ticker);
+        List<Splits> splits = (marketData != null) ? marketData.getSplits() : Collections.emptyList();
+
+        for (Transactions tx : transactions) {
+            BigDecimal txQuantity = tx.getQuantity();
+            BigDecimal txPrice    = tx.getPrice();
+
+            // Adjust for splits
+            for (Splits split : splits) {
+                if (tx.getDate().isBefore(split.getSplitDate())) {
+                    txPrice    = txPrice.divide(split.getRatioSplit(), MATH_CONTEXT);
+                    txQuantity = txQuantity.multiply(split.getRatioSplit());
+                }
+            }
+
+            if (tx.getTransactionType() == TransactionType.BUY) {
+                totalShares = totalShares.add(txQuantity);
+                totalCost   = totalCost.add(txPrice.multiply(txQuantity, MATH_CONTEXT));
+            } else if (tx.getTransactionType() == TransactionType.SELL) {
+                if (totalShares.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalStateException("Attempting to sell more shares than available");
+                }
+                BigDecimal averageCost = totalCost.divide(totalShares, MATH_CONTEXT);
+                totalShares = totalShares.subtract(txQuantity);
+                totalCost   = totalCost.subtract(averageCost.multiply(txQuantity, MATH_CONTEXT));
+            }
+        }
+
+        BigDecimal avgPrice = (totalShares.compareTo(BigDecimal.ZERO) > 0)
+                ? totalCost.divide(totalShares, MATH_CONTEXT)
+                : BigDecimal.ZERO;
+        //find holding by portfolioId and ticker, or create a new one if it doesn't exist
+        Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
+
+        if (holding != null) {
+            if (totalShares.compareTo(ZERO) < 0){
+                throw new RuntimeException("Total shares cannot be negative after recalculation");
+            }
+            // Update existing holding
+            holding.setAveragePurchasePrice(avgPrice);
+            holding.setQuantity(totalShares);
+            holding.setAveragePurchasePrice(avgPrice);
+            holding.setUpdatedAt(LocalDate.now());
+            holdingsRepository.save(holding);
+            log.info("Holding recalculated for portfolioId: {}, ticker: {}", portfolioId, ticker);
+        }
+        else {
+            throw new RuntimeException("Cant recalculate holding, it does not exist");
         }
     }
 

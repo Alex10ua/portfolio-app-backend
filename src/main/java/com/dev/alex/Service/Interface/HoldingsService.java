@@ -12,5 +12,6 @@ public interface HoldingsService {
     Holdings findHoldingByPortfolioIdAndTicker(String portfolioId, String tickerSymbol);
     void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction);
     void updateOrCreateCustomHoldingInPortfolio(String portfolioId, Transactions newTransaction);
+    void recalculateHoldingFromTransactions(String portfolioId, String ticker);
 
 }

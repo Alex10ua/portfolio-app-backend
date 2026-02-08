@@ -19,7 +19,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = "http://localhost:3001")//fix Access-Control-Allow-Origin
+@CrossOrigin(origins = "http://localhost:3001") // fix Access-Control-Allow-Origin
 public class TransactionController {
     @Autowired
     private TransactionServiceImpl transactionService;
@@ -33,17 +33,18 @@ public class TransactionController {
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
     @PostMapping("/{portfolioId}/createTransaction")
-    public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction, @PathVariable String portfolioId){
+    public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction,
+            @PathVariable String portfolioId) {
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
         transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
         transaction.setTicker(transaction.getTicker().toUpperCase());
         Transactions transactionStatus = transactionsRepository.save(transaction);
-        if (transaction.getAssetType().equals(Assets.STOCK)){
-            //need check if ticker exists in portfolio first
+        if (transaction.getAssetType().equals(Assets.STOCK)) {
+            // need check if ticker exists in portfolio first
             holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
-        }else {
-            //update holding for non stock asset
+        } else {
+            // update holding for non stock asset
             holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
         }
 
@@ -53,27 +54,40 @@ public class TransactionController {
     }
 
     @GetMapping("/{portfolioId}/transactions")
-    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId){
+    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId) {
         return transactionService.findAllByPortfolioId(portfolioId);
     }
+
     @GetMapping("/{portfolioId}/transactions/{year}")
-    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year){
+    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year) {
         return transactionService.findAllByPortfolioIdAndYear(portfolioId, year);
     }
+
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
-    public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions transaction, @PathVariable String transactionId){
-        Transactions updatedTransaction;
-        updatedTransaction = transaction;
+    public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions updatedTransaction,
+            @PathVariable String transactionId, @PathVariable String portfolioId) {
+        // need to recalculate a holding amount TODO
+        transactionService.updateTransaction(updatedTransaction, transactionId, portfolioId);
+        holdingService.recalculateHoldingFromTransactions(portfolioId, updatedTransaction.getTicker());
+        // update holding if STOCK or not TODO
+        // * if (updatedTransaction.getAssetType().equals(Assets.STOCK)) {
+
+        // } else {
+        // update holding for non stock asset TODO
+        // holdingService.updateOrCreateCustomHoldingInPortfolio(updatedTransaction.getPortfolioId(),
+        // updatedTransaction);
+        // }/
+
         return ResponseEntity.ok(updatedTransaction);
     }
+
     @DeleteMapping("/{portfolioId}/transactions/{transactionId}/delete")
-    public ResponseEntity<Map<String, Boolean>> deleteTransaction(@PathVariable String transactionId){
+    public ResponseEntity<Map<String, Boolean>> deleteTransaction(@PathVariable String transactionId) {
         Transactions transaction = transactionsRepository.findById(transactionId).orElseThrow(RuntimeException::new);
         transactionsRepository.deleteById(transactionId);
         Map<String, Boolean> response = new HashMap<>();
         response.put("deleted", Boolean.TRUE);
         return ResponseEntity.ok(response);
     }
-
 
 }
