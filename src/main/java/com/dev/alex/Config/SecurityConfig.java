@@ -33,6 +33,9 @@ public class SecurityConfig {
                         .successHandler((req, res, auth) -> res.setStatus(200)) // Return 200 OK instead of redirect
                         .failureHandler((req, res, exc) -> res.setStatus(401)) // Return 401 Unauthorized instead of redirect
                 )
+                .exceptionHandling(exc -> exc
+                        .authenticationEntryPoint(new org.springframework.security.web.authentication.HttpStatusEntryPoint(org.springframework.http.HttpStatus.UNAUTHORIZED))
+                )
                 .logout(logout -> logout
                         .logoutSuccessHandler((req, res, auth) -> res.setStatus(200))
                 );
