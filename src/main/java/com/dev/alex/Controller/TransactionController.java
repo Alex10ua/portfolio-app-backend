@@ -35,22 +35,31 @@ public class TransactionController {
     @PostMapping("/{portfolioId}/createTransaction")
     public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction,
             @PathVariable String portfolioId) {
-        transaction.setTransactionId(UUID.randomUUID().toString());
-        transaction.setPortfolioId(portfolioId);
-        transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
-        transaction.setTicker(transaction.getTicker().toUpperCase());
-        Transactions transactionStatus = transactionsRepository.save(transaction);
-        if (transaction.getAssetType().equals(Assets.STOCK)) {
-            // need check if ticker exists in portfolio first
-            holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
-        } else {
-            // update holding for non stock asset
-            holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
-        }
+        try {
+            transaction.setTransactionId(UUID.randomUUID().toString());
+            transaction.setPortfolioId(portfolioId);
+            if (transaction.getPrice() != null && transaction.getQuantity() != null) {
+                transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
+            }
+            if (transaction.getTicker() != null) {
+                transaction.setTicker(transaction.getTicker().toUpperCase());
+            }
+            Transactions transactionStatus = transactionsRepository.save(transaction);
+            if (transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.STOCK)) {
+                // need check if ticker exists in portfolio first
+                holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
+            } else {
+                // update holding for non stock asset
+                holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
+            }
 
-        Map<String, Object> response = new HashMap<>();
-        response.put("save", transactionStatus);
-        return ResponseEntity.ok(response);
+            Map<String, Object> response = new HashMap<>();
+            response.put("save", transactionStatus);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(e.getMessage());
+        }
     }
 
     @GetMapping("/{portfolioId}/transactions")

@@ -42,10 +42,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
 
                                 MarketData marketData = marketDataService
                                                 .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
-                                if (marketData.getPrice() == null
-                                                || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0) {
-                                        throw new IllegalArgumentException("Price must not be null or zero.");
-                                }
+                                
                                 BigDecimal divisionResult;
                                 BigDecimal dividedYieldPercentage;
                                 holdingsCompleteData.setTicker(holding.getTicker().toUpperCase());
@@ -58,6 +55,17 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                 .multiply(holding.getQuantity());
                                 holdingsCompleteData
                                                 .setCostBasis(costBasicTotalShare.setScale(2, RoundingMode.HALF_EVEN));
+                                
+                                if (marketData == null || marketData.getPrice() == null) {
+                                    holdingsCompleteData.setCurrentTotalValue(BigDecimal.ZERO);
+                                    holdingsCompleteData.setCurrentShareValue(BigDecimal.ZERO);
+                                    holdingsCompleteData.setTotalProfit(BigDecimal.ZERO);
+                                    holdingsCompleteData.setTotalProfitPercentage(BigDecimal.ZERO);
+                                    holdingsCompleteData.setDailyChange(BigDecimal.ZERO);
+                                    holdingsCompleteDataList.add(holdingsCompleteData);
+                                    continue;
+                                }
+
                                 BigDecimal currentTotalValueShares = (holding.getQuantity()
                                                 .multiply(marketData.getPrice())).setScale(2,
                                                                 RoundingMode.HALF_EVEN);
@@ -90,9 +98,13 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 holdingsCompleteData
                                                 .setTotalProfitPercentage(dividedYieldPercentage.setScale(2,
                                                                 RoundingMode.HALF_EVEN));
-                                holdingsCompleteData.setDailyChange(
-                                                marketData.getPrice().subtract(marketData.getPriceYesterday())
-                                                                .setScale(2, RoundingMode.HALF_EVEN));
+                                
+                                BigDecimal dailyChange = BigDecimal.ZERO;
+                                if (marketData.getPriceYesterday() != null) {
+                                        dailyChange = marketData.getPrice().subtract(marketData.getPriceYesterday())
+                                                                        .setScale(2, RoundingMode.HALF_EVEN);
+                                }
+                                holdingsCompleteData.setDailyChange(dailyChange);
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         } else {
                                 holdingsCompleteData.setTicker(holding.getTicker());
@@ -107,10 +119,16 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                 .setCostBasis(costBasicTotalShare.setScale(2, RoundingMode.HALF_EVEN));
                                 MarketData marketData = marketDataService
                                                 .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
-                                if (marketData.getPrice() == null
-                                                || marketData.getPrice().compareTo(BigDecimal.ZERO) == 0) {
-                                        throw new IllegalArgumentException("Price must not be null or zero.");
+                                
+                                if (marketData == null || marketData.getPrice() == null) {
+                                    holdingsCompleteData.setCurrentTotalValue(BigDecimal.ZERO);
+                                    holdingsCompleteData.setCurrentShareValue(BigDecimal.ZERO);
+                                    holdingsCompleteData.setTotalProfit(BigDecimal.ZERO);
+                                    holdingsCompleteData.setTotalProfitPercentage(BigDecimal.ZERO);
+                                    holdingsCompleteDataList.add(holdingsCompleteData);
+                                    continue;
                                 }
+
                                 BigDecimal currentTotalValueShares = (holding.getQuantity()
                                                 .multiply(marketData.getPrice())).setScale(2,
                                                                 RoundingMode.HALF_EVEN);
