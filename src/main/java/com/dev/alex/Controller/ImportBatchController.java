@@ -140,16 +140,19 @@ public class ImportBatchController {
         importBatchRepository.deleteById(batchId);
 
         for (String ticker : affectedStockTickers) {
-            List<Transactions> remaining = transactionsRepository.findAllByPortfolioIdAndTicker(portfolioId, ticker);
-            if (remaining.isEmpty()) {
-                // No transactions left for this ticker — remove the holding entirely
-                Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
-                if (holding != null) {
-                    holdingsRepository.delete(holding);
+            try {
+                List<Transactions> remaining = transactionsRepository.findAllByPortfolioIdAndTicker(portfolioId, ticker);
+                if (remaining.isEmpty()) {
+                    Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
+                    if (holding != null) {
+                        holdingsRepository.delete(holding);
+                    }
+                } else {
+                    holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);
                 }
-            } else {
-                // Holding exists and still has transactions — recalculate
-                holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);
+            } catch (Exception e) {
+                // Log but don't fail — transactions are already deleted
+                e.printStackTrace();
             }
         }
 
