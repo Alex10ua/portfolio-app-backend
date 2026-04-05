@@ -13,5 +13,7 @@ public interface TransactionsRepository extends MongoRepository<Transactions, St
     List<Transactions> findAllByPortfolioId(String portfolioId);
     List<Transactions> findAllByPortfolioIdAndTicker(String portfolioId, String ticker);
     List<Transactions> findAllByPortfolioIdAndDateBetween(String portfolioId, LocalDate startDate, LocalDate endDate);
+    List<Transactions> findAllByImportBatchId(String importBatchId);
+    void deleteAllByImportBatchId(String importBatchId);
 
 }

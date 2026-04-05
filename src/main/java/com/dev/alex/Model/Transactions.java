@@ -44,4 +44,5 @@ public class Transactions {
     private BigDecimal totalAmount;
     private String currency;
     private BigDecimal commission;
+    private String importBatchId;
 }
