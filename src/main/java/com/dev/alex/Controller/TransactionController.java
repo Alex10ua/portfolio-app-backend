@@ -6,6 +6,8 @@ import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.TransactionServiceImpl;
+import com.dev.alex.Service.TickersServiceImpl;
+import com.dev.alex.Service.WebCalls.FlaskClientService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +31,10 @@ public class TransactionController {
     private HoldingServiceImpl holdingService;
     @Autowired
     private HoldingsRepository holdingsRepository;
+    @Autowired
+    private FlaskClientService flaskClientService;
+    @Autowired
+    private TickersServiceImpl tickersService;
 
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
@@ -48,6 +54,8 @@ public class TransactionController {
             if (transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.STOCK)) {
                 // need check if ticker exists in portfolio first
                 holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
+                tickersService.saveIfNotExists(transaction.getTicker());
+                flaskClientService.sendSyncPostRequest(transaction.getTicker());
             } else {
                 // update holding for non stock asset
                 holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
