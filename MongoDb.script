@@ -210,3 +210,45 @@ db.transactions.createIndex({ portfolioId: 1, date: -1 });
 
 // Індекс на tickerSymbol та date в колекції marketData
 db.marketData.createIndex({ tickerSymbol: 1, date: -1 });
+
+// 6. Custom Assets (customAssets)
+db.createCollection("customAssets", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["portfolioId", "ticker", "name", "assetType", "currency", "unit", "priceUpdateMethod", "createdAt"],
+            properties: {
+                id: { bsonType: "string" },
+                portfolioId: { bsonType: "string", description: "Portfolio this asset belongs to" },
+                ticker: { bsonType: "string", description: "Unique ID within portfolio (e.g. SILV-EAGLE-1OZ)" },
+                name: { bsonType: "string", description: "Display name" },
+                assetType: { bsonType: "string", description: "User-defined category (e.g. COIN, FIGURE, WINE)" },
+                description: { bsonType: "string" },
+                country: { bsonType: "string" },
+                currency: { bsonType: "string", description: "e.g. USD, EUR" },
+                unit: { bsonType: "string", description: "e.g. pcs, oz, bottle" },
+                priceNow: { bsonType: ["number", "null"] },
+                priceHistory: {
+                    bsonType: "array",
+                    items: {
+                        bsonType: "object",
+                        required: ["date", "price"],
+                        properties: {
+                            date: { bsonType: "date" },
+                            price: { bsonType: "number" }
+                        }
+                    }
+                },
+                priceUpdateMethod: { enum: ["MANUAL", "EXTERNAL"] },
+                customFields: { bsonType: "object" },
+                createdAt: { bsonType: "date" },
+                updatedAt: { bsonType: "date" }
+            }
+        }
+    }
+});
+
+// Index on portfolioId for listing custom assets per portfolio
+db.customAssets.createIndex({ portfolioId: 1 });
+// Unique index: ticker must be unique per portfolio
+db.customAssets.createIndex({ portfolioId: 1, ticker: 1 }, { unique: true });

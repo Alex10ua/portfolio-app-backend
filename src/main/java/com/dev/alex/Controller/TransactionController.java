@@ -1,9 +1,11 @@
 package com.dev.alex.Controller;
 
+import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.TransactionsRepository;
+import com.dev.alex.Service.CustomAssetServiceImpl;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.TransactionServiceImpl;
 import com.dev.alex.Service.TickersServiceImpl;
@@ -35,6 +37,8 @@ public class TransactionController {
     private FlaskClientService flaskClientService;
     @Autowired
     private TickersServiceImpl tickersService;
+    @Autowired
+    private CustomAssetServiceImpl customAssetService;
 
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
@@ -52,12 +56,20 @@ public class TransactionController {
             }
             Transactions transactionStatus = transactionsRepository.save(transaction);
             if (transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.STOCK)) {
-                // need check if ticker exists in portfolio first
                 holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
                 tickersService.saveIfNotExists(transaction.getTicker());
                 flaskClientService.sendSyncPostRequest(transaction.getTicker());
+            } else if (transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.CUSTOM)) {
+                // Populate name and priceNow from the custom asset definition
+                CustomAsset customAsset = customAssetService.findByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());
+                if (transaction.getName() == null || transaction.getName().isBlank()) {
+                    transaction.setName(customAsset.getName());
+                }
+                if (transaction.getPriceNow() == null) {
+                    transaction.setPriceNow(customAsset.getPriceNow());
+                }
+                holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
             } else {
-                // update holding for non stock asset
                 holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
             }
 
@@ -83,18 +95,10 @@ public class TransactionController {
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
     public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions updatedTransaction,
             @PathVariable String transactionId, @PathVariable String portfolioId) {
-        // need to recalculate a holding amount TODO
         transactionService.updateTransaction(updatedTransaction, transactionId, portfolioId);
+        // recalculateHoldingFromTransactions works for all asset types:
+        // for STOCK it applies split-adjusted calculation; for others splits list is empty (no-op)
         holdingService.recalculateHoldingFromTransactions(portfolioId, updatedTransaction.getTicker());
-        // update holding if STOCK or not TODO
-        // * if (updatedTransaction.getAssetType().equals(Assets.STOCK)) {
-
-        // } else {
-        // update holding for non stock asset TODO
-        // holdingService.updateOrCreateCustomHoldingInPortfolio(updatedTransaction.getPortfolioId(),
-        // updatedTransaction);
-        // }/
-
         return ResponseEntity.ok(updatedTransaction);
     }
 
