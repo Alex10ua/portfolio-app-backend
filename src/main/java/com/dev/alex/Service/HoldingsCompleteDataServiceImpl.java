@@ -46,6 +46,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 BigDecimal divisionResult;
                                 BigDecimal dividedYieldPercentage;
                                 holdingsCompleteData.setTicker(holding.getTicker().toUpperCase());
+                                holdingsCompleteData.setAssetType("STOCK");
+                                holdingsCompleteData.setName(marketData != null ? marketData.getName() : null);
                                 holdingsCompleteData.setShareAmount(
                                                 holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
                                 holdingsCompleteData
@@ -108,6 +110,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         } else {
                                 holdingsCompleteData.setTicker(holding.getTicker());
+                                holdingsCompleteData.setAssetType(holding.getAssetType().name());
+                                holdingsCompleteData.setName(holding.getName());
                                 holdingsCompleteData.setShareAmount(
                                                 holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
                                 holdingsCompleteData

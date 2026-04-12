@@ -14,6 +14,7 @@ public class HoldingsCompleteData {
 
     private String name;
     private String ticker;
+    private String assetType;
     private BigDecimal shareAmount;
     private BigDecimal costPerShare;
     private BigDecimal costBasis;
