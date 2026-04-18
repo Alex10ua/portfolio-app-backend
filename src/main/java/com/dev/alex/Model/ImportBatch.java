@@ -22,4 +22,6 @@ public class ImportBatch {
     private String filename;
     private LocalDateTime uploadedAt;
     private int transactionCount;
+    private String status;
+    private String errorMessage;
 }

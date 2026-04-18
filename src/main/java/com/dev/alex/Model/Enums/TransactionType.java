@@ -1,5 +1,5 @@
 package com.dev.alex.Model.Enums;
 
 public enum TransactionType {
-    BUY, SELL, DIVIDEND, TAX
+    BUY, SELL, DIVIDEND, TAX, DEPOSIT, WITHDRAWAL
 }

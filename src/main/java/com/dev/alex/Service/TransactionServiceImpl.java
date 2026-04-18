@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.Interface.TransactionService;
@@ -36,6 +37,14 @@ public class TransactionServiceImpl implements TransactionService {
         LocalDate startDate = LocalDate.of(year, 1, 1);
         LocalDate endDate = LocalDate.of(year, 12, 31);
         return transactionsRepository.findAllByPortfolioIdAndDateBetween(portfolioId, startDate, endDate);
+    }
+
+    @Override
+    public List<Transactions> findBuySellByPortfolioIdAndYear(String portfolioId, int year) {
+        LocalDate startDate = LocalDate.of(year, 1, 1);
+        LocalDate endDate = LocalDate.of(year, 12, 31);
+        return transactionsRepository.findAllByPortfolioIdAndDateBetweenAndTransactionTypeIn(
+                portfolioId, startDate, endDate, List.of(TransactionType.BUY, TransactionType.SELL));
     }
 
     @Override

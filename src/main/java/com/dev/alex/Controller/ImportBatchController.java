@@ -1,13 +1,14 @@
 package com.dev.alex.Controller;
 
+import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.ImportBatch;
 import com.dev.alex.Model.Transactions;
-import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.ImportBatchRepository;
 import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.HoldingServiceImpl;
+import com.dev.alex.Service.ImportBatchProcessingService;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -32,6 +33,8 @@ public class ImportBatchController {
     private HoldingsRepository holdingsRepository;
     @Autowired
     private HoldingServiceImpl holdingService;
+    @Autowired
+    private ImportBatchProcessingService importBatchProcessingService;
 
     @Data
     @AllArgsConstructor
@@ -80,29 +83,12 @@ public class ImportBatchController {
             batch.setFilename(request.getFilename());
             batch.setUploadedAt(LocalDateTime.now());
             batch.setTransactionCount(transactions.size());
+            batch.setStatus("PROCESSING");
             importBatchRepository.save(batch);
 
-            // For each unique STOCK ticker, call updateOrCreateHoldingInPortfolioUpdated once.
-            // It creates the holding if needed, recalculates from all transactions,
-            // updates firstTradeYear, and triggers market data fetch.
-            Map<String, Transactions> firstStockTxByTicker = new LinkedHashMap<>();
-            for (Transactions t : transactions) {
-                if (t.getAssetType() != null && t.getAssetType().equals(Assets.STOCK)) {
-                    firstStockTxByTicker.putIfAbsent(t.getTicker(), t);
-                }
-            }
-            for (Transactions representative : firstStockTxByTicker.values()) {
-                holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, representative);
-            }
+            importBatchProcessingService.processHoldings(portfolioId, batchId, transactions);
 
-            // For non-stock assets, process each transaction individually
-            for (Transactions t : transactions) {
-                if (t.getAssetType() != null && !t.getAssetType().equals(Assets.STOCK)) {
-                    holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, t);
-                }
-            }
-
-            return ResponseEntity.ok(batch);
+            return ResponseEntity.accepted().body(batch);
         } catch (Exception e) {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body(e.getMessage());

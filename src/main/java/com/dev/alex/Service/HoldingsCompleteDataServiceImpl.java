@@ -82,24 +82,29 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                         holdingsCompleteData.setDividendYield(
                                                         dividedYieldPercentage.setScale(2, RoundingMode.HALF_EVEN));
 
-                                        divisionResult = marketData.getYearlyDividend().divide(
-                                                        holding.getAveragePurchasePrice(),
-                                                        MATH_CONTEXT);
-                                        dividedYieldPercentage = divisionResult.multiply(HUNDRED);
-                                        holdingsCompleteData
-                                                        .setDividendYieldOnCost(dividedYieldPercentage.setScale(2,
-                                                                        RoundingMode.HALF_EVEN));
+                                        if (holding.getAveragePurchasePrice() != null
+                                                        && holding.getAveragePurchasePrice().compareTo(BigDecimal.ZERO) != 0) {
+                                                divisionResult = marketData.getYearlyDividend().divide(
+                                                                holding.getAveragePurchasePrice(),
+                                                                MATH_CONTEXT);
+                                                dividedYieldPercentage = divisionResult.multiply(HUNDRED);
+                                                holdingsCompleteData
+                                                                .setDividendYieldOnCost(dividedYieldPercentage.setScale(2,
+                                                                                RoundingMode.HALF_EVEN));
+                                        }
                                 }
                                 BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(
                                                 2,
                                                 RoundingMode.HALF_EVEN);
                                 holdingsCompleteData.setTotalProfit(totalProfit);
 
-                                divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
-                                dividedYieldPercentage = divisionResult.multiply(HUNDRED);
-                                holdingsCompleteData
-                                                .setTotalProfitPercentage(dividedYieldPercentage.setScale(2,
-                                                                RoundingMode.HALF_EVEN));
+                                if (costBasicTotalShare.compareTo(BigDecimal.ZERO) != 0) {
+                                        divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
+                                        dividedYieldPercentage = divisionResult.multiply(HUNDRED);
+                                        holdingsCompleteData
+                                                        .setTotalProfitPercentage(dividedYieldPercentage.setScale(2,
+                                                                        RoundingMode.HALF_EVEN));
+                                }
                                 
                                 BigDecimal dailyChange = BigDecimal.ZERO;
                                 if (marketData.getPriceYesterday() != null) {
@@ -143,11 +148,13 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                 2,
                                                 RoundingMode.HALF_EVEN);
                                 holdingsCompleteData.setTotalProfit(totalProfit);
-                                BigDecimal divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
-                                BigDecimal dividedYieldPercentage = divisionResult.multiply(HUNDRED);
-                                holdingsCompleteData
-                                                .setTotalProfitPercentage(dividedYieldPercentage.setScale(2,
-                                                                RoundingMode.HALF_EVEN));
+                                if (costBasicTotalShare.compareTo(BigDecimal.ZERO) != 0) {
+                                        BigDecimal divisionResult = totalProfit.divide(costBasicTotalShare, MATH_CONTEXT);
+                                        BigDecimal dividedYieldPercentage = divisionResult.multiply(HUNDRED);
+                                        holdingsCompleteData
+                                                        .setTotalProfitPercentage(dividedYieldPercentage.setScale(2,
+                                                                        RoundingMode.HALF_EVEN));
+                                }
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         }
                 }

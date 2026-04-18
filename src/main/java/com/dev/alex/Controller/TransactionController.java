@@ -2,6 +2,7 @@ package com.dev.alex.Controller;
 
 import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Model.Enums.Assets;
+import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.TransactionsRepository;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,7 +57,16 @@ public class TransactionController {
                 transaction.setTicker(transaction.getTicker().toUpperCase());
             }
             Transactions transactionStatus = transactionsRepository.save(transaction);
-            if (transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.STOCK)) {
+            boolean isCash = transaction.getTransactionType() != null &&
+                    (transaction.getTransactionType().equals(TransactionType.DEPOSIT) ||
+                     transaction.getTransactionType().equals(TransactionType.WITHDRAWAL));
+            // DIVIDEND and TAX are cash events, not share quantity changes — skip holding update
+            boolean isHoldingChange = transaction.getTransactionType() != null &&
+                    (transaction.getTransactionType().equals(TransactionType.BUY) ||
+                     transaction.getTransactionType().equals(TransactionType.SELL));
+            if (isCash) {
+                // Cash deposits and withdrawals do not affect asset holdings
+            } else if (isHoldingChange && transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.STOCK)) {
                 holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
                 tickersService.saveIfNotExists(transaction.getTicker());
                 flaskClientService.sendSyncPostRequest(transaction.getTicker());
@@ -69,7 +80,7 @@ public class TransactionController {
                     transaction.setPriceNow(customAsset.getPriceNow());
                 }
                 holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
-            } else {
+            } else if (transaction.getAssetType() != null) {
                 holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
             }
 
@@ -89,7 +100,7 @@ public class TransactionController {
 
     @GetMapping("/{portfolioId}/transactions/{year}")
     public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year) {
-        return transactionService.findAllByPortfolioIdAndYear(portfolioId, year);
+        return transactionService.findBuySellByPortfolioIdAndYear(portfolioId, year);
     }
 
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
@@ -100,6 +111,23 @@ public class TransactionController {
         // for STOCK it applies split-adjusted calculation; for others splits list is empty (no-op)
         holdingService.recalculateHoldingFromTransactions(portfolioId, updatedTransaction.getTicker());
         return ResponseEntity.ok(updatedTransaction);
+    }
+
+    @GetMapping("/{portfolioId}/cashBalance")
+    public ResponseEntity<Map<String, BigDecimal>> getCashBalance(@PathVariable String portfolioId) {
+        List<Transactions> transactions = transactionService.findAllByPortfolioId(portfolioId);
+        Map<String, BigDecimal> balance = new HashMap<>();
+        for (Transactions t : transactions) {
+            if (t.getTransactionType() == null || t.getCurrency() == null || t.getAmount() == null) continue;
+            String currency = t.getCurrency();
+            BigDecimal current = balance.getOrDefault(currency, BigDecimal.ZERO);
+            if (t.getTransactionType().equals(TransactionType.DEPOSIT)) {
+                balance.put(currency, current.add(t.getAmount()));
+            } else if (t.getTransactionType().equals(TransactionType.WITHDRAWAL)) {
+                balance.put(currency, current.subtract(t.getAmount()));
+            }
+        }
+        return ResponseEntity.ok(balance);
     }
 
     @DeleteMapping("/{portfolioId}/transactions/{transactionId}/delete")
