@@ -18,4 +18,6 @@ public interface TransactionsRepository extends MongoRepository<Transactions, St
     List<Transactions> findAllByImportBatchId(String importBatchId);
     void deleteAllByImportBatchId(String importBatchId);
 
+    List<Transactions> findAllByPortfolioIdOrderByDateAsc(String portfolioId);
+
 }
