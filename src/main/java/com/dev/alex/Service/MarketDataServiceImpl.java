@@ -6,10 +6,12 @@ import com.dev.alex.Service.Interface.MarketDataService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Description;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 
 @Service
+@Transactional
 public class MarketDataServiceImpl implements MarketDataService {
     @Autowired
     private MarketDataRepository marketDataRepository;
@@ -27,7 +29,7 @@ public class MarketDataServiceImpl implements MarketDataService {
     @Description("get info for holding on Holding web-page")
     @Override
     public MarketData getMarketDataForHoldingsPage(String ticker) {
-        return  marketDataRepository.findByTickerForHoldingsPage(ticker);
+        return marketDataRepository.findByTickerForHoldingsPage(ticker);
     }
 
     @Override

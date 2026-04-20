@@ -1,12 +1,15 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.Splits;
+import com.dev.alex.Model.Portfolios;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.MarketDataRepository;
+import com.dev.alex.Repository.PortfolioRepository;
 import com.dev.alex.Service.Interface.HoldingsService;
 import com.dev.alex.Service.WebCalls.FlaskClientService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,8 +19,13 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.util.*;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
+@Transactional
 @Service
 public class HoldingServiceImpl implements HoldingsService {
     private static final BigDecimal ZERO = BigDecimal.valueOf(0);
@@ -33,6 +41,8 @@ public class HoldingServiceImpl implements HoldingsService {
     private TickersServiceImpl tickersService;
     @Autowired
     private FlaskClientService flaskClientService;
+    @Autowired
+    private PortfolioRepository portfolioRepository;
 
     @Override
     public List<Holdings> getAllHoldingsByPortfolioId(String portfolioId) {
@@ -57,8 +67,19 @@ public class HoldingServiceImpl implements HoldingsService {
     @Override
     public void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction) {
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        log.info("Inside updateOrCreateHoldingInPortfolioUpdated");
         MarketData marketDataCheck = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
-        tickersService.saveIfNotExists(newTransaction.getTicker().toUpperCase());
+        //tickersService.saveIfNotExists(newTransaction.getTicker().toUpperCase());// TODO Table for updating ticker price
+        Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
+        if (portfolio.getFirstTradeYear() == null) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        } else if (portfolio.getFirstTradeYear().isAfter(newTransaction.getDate())) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        }
         if (marketDataCheck == null) {
             //async call to flask server to get market data
             try{
@@ -66,13 +87,13 @@ public class HoldingServiceImpl implements HoldingsService {
                 ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(newTransaction.getTicker().toUpperCase());
 
                 if (response != null) {
-                    System.out.println("Status Code: " + response.getStatusCode());
-                    System.out.println("Response Body: " + response.getBody());
+                    log.info("Status Code: " + response.getStatusCode());
+                    log.info("Response Body: " + response.getBody());
                 } else {
-                    System.out.println("No response received");
+                    log.error("No response received");
                 }
             } catch (Exception e) {
-                System.out.println("Error in sync call to flask server: " + e.getMessage());
+               log.error("Error in sync call to flask server: " + e.getMessage());
             }
 
         }
@@ -120,14 +141,14 @@ public class HoldingServiceImpl implements HoldingsService {
 
             } else if (tx.getTransactionType().equals(TransactionType.SELL)) {
                 if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal sellQty = txQuantity.min(totalShares);
                     BigDecimal averageCost = totalCost.divide(totalShares, MATH_CONTEXT);
-                    totalShares = totalShares.subtract(txQuantity);
-                    BigDecimal soldCost = averageCost.multiply(txQuantity, MATH_CONTEXT);
+                    totalShares = totalShares.subtract(sellQty);
+                    BigDecimal soldCost = averageCost.multiply(sellQty, MATH_CONTEXT);
                     totalCost = totalCost.subtract(soldCost);
-
-                } else {
-                    throw new RuntimeException("Selling more shares than available");
                 }
+                // If totalShares == 0, the BUY history is missing (e.g. imported from a partial statement).
+                // Skip this SELL rather than crashing the import.
             }
         }
         BigDecimal finalAvgPrice;
@@ -152,8 +173,173 @@ public class HoldingServiceImpl implements HoldingsService {
     }
 
     @Override
+    public void recalculateOrCreateHoldingFromTicker(String portfolioId, String ticker, Assets assetType) {
+        String upperTicker = ticker.toUpperCase();
+        List<Transactions> transactionsList =
+                transactionService.findAllByPortfolioIdAndTicker(portfolioId, upperTicker);
+        if (transactionsList == null || transactionsList.isEmpty()) return;
+
+        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        LocalDate earliestDate = transactionsList.get(0).getDate();
+        LocalDate latestDate   = transactionsList.get(transactionsList.size() - 1).getDate();
+
+        Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
+        if (portfolio.getFirstTradeYear() == null || portfolio.getFirstTradeYear().isAfter(earliestDate)) {
+            portfolio.setFirstTradeYear(LocalDate.of(earliestDate.getYear(), 1, 2));
+            portfolio.setUpdatedAt(new java.util.Date());
+            portfolioRepository.save(portfolio);
+        }
+
+        MarketData marketData = marketDataRepository.findByTicker(upperTicker);
+        if (marketData == null) {
+            try {
+                tickersService.createTicker(upperTicker);
+                ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(upperTicker);
+                if (response != null) {
+                    log.info("Market data fetched for {}: {}", upperTicker, response.getStatusCode());
+                } else {
+                    log.error("No response received for {}", upperTicker);
+                }
+            } catch (Exception e) {
+                log.error("Error fetching market data for {}: {}", upperTicker, e.getMessage());
+            }
+            marketData = marketDataRepository.findByTicker(upperTicker);
+        }
+
+        List<Splits> splitsList = (marketData != null) ? marketData.getSplits() : Collections.emptyList();
+        BigDecimal totalShares = BigDecimal.ZERO;
+        BigDecimal totalCost   = BigDecimal.ZERO;
+
+        for (Transactions tx : transactionsList) {
+            BigDecimal txQuantity = tx.getQuantity();
+            BigDecimal txPrice    = tx.getPrice();
+
+            for (Splits split : splitsList) {
+                if (tx.getDate().isBefore(split.getSplitDate())) {
+                    txPrice    = txPrice.divide(split.getRatioSplit(), MATH_CONTEXT);
+                    txQuantity = txQuantity.multiply(split.getRatioSplit());
+                }
+            }
+
+            if (tx.getTransactionType().equals(TransactionType.BUY)) {
+                totalShares = totalShares.add(txQuantity);
+                totalCost   = totalCost.add(txPrice.multiply(txQuantity, MATH_CONTEXT));
+            } else if (tx.getTransactionType().equals(TransactionType.SELL)) {
+                if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal sellQty    = txQuantity.min(totalShares);
+                    BigDecimal avgCost    = totalCost.divide(totalShares, MATH_CONTEXT);
+                    totalShares = totalShares.subtract(sellQty);
+                    totalCost   = totalCost.subtract(avgCost.multiply(sellQty, MATH_CONTEXT));
+                }
+            }
+        }
+
+        BigDecimal finalAvgPrice = totalShares.compareTo(BigDecimal.ZERO) > 0
+                ? totalCost.divide(totalShares, MATH_CONTEXT)
+                : BigDecimal.ZERO;
+
+        Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, upperTicker);
+        if (holding == null) {
+            holding = new Holdings();
+            holding.setHoldingId(UUID.randomUUID().toString());
+            holding.setPortfolioId(portfolioId);
+            holding.setAssetType(assetType);
+            holding.setTicker(upperTicker);
+            holding.setCreatedAt(earliestDate);
+        }
+        holding.setQuantity(totalShares);
+        holding.setAveragePurchasePrice(finalAvgPrice);
+        holding.setUpdatedAt(latestDate);
+        holdingsRepository.save(holding);
+
+        if (totalShares.compareTo(BigDecimal.ZERO) == 0) {
+            holdingsRepository.delete(holding);
+        }
+    }
+
+    @Override
+    public void recalculateOrCreateCustomHoldingFromTicker(String portfolioId, String ticker, Assets assetType) {
+        String upperTicker = ticker.toUpperCase();
+        List<Transactions> transactionsList =
+                transactionService.findAllByPortfolioIdAndTicker(portfolioId, upperTicker);
+        if (transactionsList == null || transactionsList.isEmpty()) return;
+
+        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        LocalDate earliestDate = transactionsList.get(0).getDate();
+        LocalDate latestDate   = transactionsList.get(transactionsList.size() - 1).getDate();
+        Transactions latestTx  = transactionsList.get(transactionsList.size() - 1);
+
+        Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
+        if (portfolio.getFirstTradeYear() == null || portfolio.getFirstTradeYear().isAfter(earliestDate)) {
+            portfolio.setFirstTradeYear(LocalDate.of(earliestDate.getYear(), 1, 2));
+            portfolio.setUpdatedAt(new java.util.Date());
+            portfolioRepository.save(portfolio);
+        }
+
+        BigDecimal totalShares = BigDecimal.ZERO;
+        BigDecimal totalCost   = BigDecimal.ZERO;
+        for (Transactions tx : transactionsList) {
+            if (tx.getTransactionType().equals(TransactionType.BUY)) {
+                totalShares = totalShares.add(tx.getQuantity());
+                totalCost   = totalCost.add(tx.getPrice().multiply(tx.getQuantity()));
+            } else if (tx.getTransactionType().equals(TransactionType.SELL)) {
+                if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal sellQty = tx.getQuantity().min(totalShares);
+                    BigDecimal avgCost = totalCost.divide(totalShares, MATH_CONTEXT);
+                    totalShares = totalShares.subtract(sellQty);
+                    totalCost   = totalCost.subtract(avgCost.multiply(sellQty, MATH_CONTEXT));
+                }
+            }
+        }
+
+        BigDecimal finalAvgPrice = totalShares.compareTo(BigDecimal.ZERO) > 0
+                ? totalCost.divide(totalShares, MATH_CONTEXT)
+                : BigDecimal.ZERO;
+
+        Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, upperTicker);
+        if (holding == null) {
+            holding = new Holdings();
+            holding.setHoldingId(UUID.randomUUID().toString());
+            holding.setPortfolioId(portfolioId);
+            holding.setAssetType(assetType);
+            holding.setTicker(upperTicker);
+            holding.setName(latestTx.getName());
+            holding.setPriceNow(latestTx.getPriceNow() != null ? latestTx.getPriceNow() : BigDecimal.ZERO);
+            holding.setCreatedAt(earliestDate);
+        }
+        holding.setQuantity(totalShares);
+        holding.setAveragePurchasePrice(finalAvgPrice);
+        holding.setUpdatedAt(latestDate);
+        holdingsRepository.save(holding);
+
+        MarketData marketData = marketDataRepository.findByTicker(upperTicker);
+        if (marketData == null) {
+            MarketData newMarketData = new MarketData();
+            newMarketData.setTicker(upperTicker);
+            newMarketData.setName(latestTx.getName());
+            newMarketData.setPrice(latestTx.getPriceNow());
+            newMarketData.setUpdatedAt(latestDate);
+            marketDataRepository.save(newMarketData);
+        }
+
+        if (totalShares.compareTo(BigDecimal.ZERO) == 0) {
+            holdingsRepository.delete(holding);
+        }
+    }
+
+    @Override
     public void updateOrCreateCustomHoldingInPortfolio(String portfolioId, Transactions newTransaction) {
         Holdings holdings = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
+        Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
+        if (portfolio.getFirstTradeYear() == null) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        } else if (portfolio.getFirstTradeYear().isAfter(newTransaction.getDate())) {
+            portfolio.setFirstTradeYear(LocalDate.of(newTransaction.getDate().getYear(), 1, 2)); // TODO fix UTC time in mongoDB
+            portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
+            portfolioRepository.save(portfolio);
+        }
         if (holdings == null){
             Holdings newHolding = new Holdings();
             newHolding.setHoldingId(UUID.randomUUID().toString());
@@ -217,6 +403,60 @@ public class HoldingServiceImpl implements HoldingsService {
         Holdings holdingZero = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
         if (holdingZero.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
             holdingsRepository.delete(holdingZero);
+        }
+    }
+    @Override
+    public void recalculateHoldingFromTransactions(String portfolioId, String ticker) {
+        BigDecimal totalShares = BigDecimal.ZERO;
+        BigDecimal totalCost   = BigDecimal.ZERO;
+
+        MarketData marketData = marketDataRepository.findByTicker(ticker);
+        List<Transactions> transactions = transactionService.findAllByPortfolioIdAndTicker(portfolioId, ticker);
+        List<Splits> splits = (marketData != null) ? marketData.getSplits() : Collections.emptyList();
+
+        for (Transactions tx : transactions) {
+            BigDecimal txQuantity = tx.getQuantity();
+            BigDecimal txPrice    = tx.getPrice();
+
+            // Adjust for splits
+            for (Splits split : splits) {
+                if (tx.getDate().isBefore(split.getSplitDate())) {
+                    txPrice    = txPrice.divide(split.getRatioSplit(), MATH_CONTEXT);
+                    txQuantity = txQuantity.multiply(split.getRatioSplit());
+                }
+            }
+
+            if (tx.getTransactionType() == TransactionType.BUY) {
+                totalShares = totalShares.add(txQuantity);
+                totalCost   = totalCost.add(txPrice.multiply(txQuantity, MATH_CONTEXT));
+            } else if (tx.getTransactionType() == TransactionType.SELL) {
+                if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal sellQty = txQuantity.min(totalShares);
+                    BigDecimal averageCost = totalCost.divide(totalShares, MATH_CONTEXT);
+                    totalShares = totalShares.subtract(sellQty);
+                    totalCost   = totalCost.subtract(averageCost.multiply(sellQty, MATH_CONTEXT));
+                }
+                // Skip SELL if no shares tracked (missing BUY history from a prior import).
+            }
+        }
+
+        BigDecimal avgPrice = (totalShares.compareTo(BigDecimal.ZERO) > 0)
+                ? totalCost.divide(totalShares, MATH_CONTEXT)
+                : BigDecimal.ZERO;
+        //find holding by portfolioId and ticker, or create a new one if it doesn't exist
+        Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
+
+        if (holding != null) {
+            // Update existing holding
+            holding.setAveragePurchasePrice(avgPrice);
+            holding.setQuantity(totalShares);
+            holding.setAveragePurchasePrice(avgPrice);
+            holding.setUpdatedAt(LocalDate.now());
+            holdingsRepository.save(holding);
+            log.info("Holding recalculated for portfolioId: {}, ticker: {}", portfolioId, ticker);
+        }
+        else {
+            throw new RuntimeException("Cant recalculate holding, it does not exist");
         }
     }
 

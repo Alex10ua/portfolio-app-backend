@@ -20,7 +20,7 @@ public class FlaskClientService {
 
     public ResponseEntity<String> sendSyncPostRequest(String ticker) {
        return webClient.post()
-                .uri("/update_one")
+                .uri("/update/auto")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(new Tickers(ticker))
                 .retrieve()

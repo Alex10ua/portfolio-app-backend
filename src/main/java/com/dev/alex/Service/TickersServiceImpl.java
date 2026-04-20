@@ -4,9 +4,12 @@ import com.dev.alex.Model.Tickers;
 import com.dev.alex.Repository.TickersRepository;
 import com.dev.alex.Service.Interface.TickersService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@Transactional
 public class TickersServiceImpl implements TickersService {
     @Autowired
     private TickersRepository tickersRepository;
@@ -23,8 +26,10 @@ public class TickersServiceImpl implements TickersService {
 
     @Override
     public void saveIfNotExists(String ticker) {
-        if (tickersRepository.findByTicker(ticker) == null) {
-            createTicker(ticker);
+        try {
+            tickersRepository.save(new Tickers(ticker));
+        } catch (DuplicateKeyException e) {
+            // ticker already in the queue, nothing to do
         }
     }
 }
