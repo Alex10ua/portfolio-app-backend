@@ -119,16 +119,14 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 holdingsCompleteData.setName(holding.getName());
                                 holdingsCompleteData.setShareAmount(
                                                 holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
-                                holdingsCompleteData
-                                                .setCostPerShare(holding.getAveragePurchasePrice().setScale(2,
-                                                                RoundingMode.HALF_EVEN));
+                                holdingsCompleteData.setCostPerShare(holding.getAveragePurchasePrice());
                                 BigDecimal costBasicTotalShare = holding.getAveragePurchasePrice()
                                                 .multiply(holding.getQuantity());
                                 holdingsCompleteData
                                                 .setCostBasis(costBasicTotalShare.setScale(2, RoundingMode.HALF_EVEN));
                                 MarketData marketData = marketDataService
                                                 .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
-                                
+
                                 if (marketData == null || marketData.getPrice() == null) {
                                     holdingsCompleteData.setCurrentTotalValue(BigDecimal.ZERO);
                                     holdingsCompleteData.setCurrentShareValue(BigDecimal.ZERO);
@@ -142,8 +140,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                 .multiply(marketData.getPrice())).setScale(2,
                                                                 RoundingMode.HALF_EVEN);
                                 holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
-                                holdingsCompleteData.setCurrentShareValue(
-                                                marketData.getPrice().setScale(2, RoundingMode.HALF_EVEN));
+                                holdingsCompleteData.setCurrentShareValue(marketData.getPrice());
                                 BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(
                                                 2,
                                                 RoundingMode.HALF_EVEN);
