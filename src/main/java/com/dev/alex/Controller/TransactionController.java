@@ -7,6 +7,7 @@ import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.CustomAssetServiceImpl;
+import com.dev.alex.Service.FxRateServiceImpl;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.TransactionServiceImpl;
 import com.dev.alex.Service.TickersServiceImpl;
@@ -41,6 +42,8 @@ public class TransactionController {
     private TickersServiceImpl tickersService;
     @Autowired
     private CustomAssetServiceImpl customAssetService;
+    @Autowired
+    private FxRateServiceImpl fxRateService;
 
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
@@ -95,12 +98,16 @@ public class TransactionController {
 
     @GetMapping("/{portfolioId}/transactions")
     public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId) {
-        return transactionService.findAllByPortfolioId(portfolioId);
+        List<Transactions> transactions = transactionService.findAllByPortfolioId(portfolioId);
+        transactions.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency())));
+        return transactions;
     }
 
     @GetMapping("/{portfolioId}/transactions/{year}")
     public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year) {
-        return transactionService.findBuySellByPortfolioIdAndYear(portfolioId, year);
+        List<Transactions> transactions = transactionService.findBuySellByPortfolioIdAndYear(portfolioId, year);
+        transactions.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency())));
+        return transactions;
     }
 
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")

@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.util.Date;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import com.dev.alex.Model.Enums.Assets;
@@ -45,4 +46,6 @@ public class Transactions {
     private String currency;
     private BigDecimal commission;
     private String importBatchId;
+    @Transient
+    private BigDecimal fxRate; // populated at query time from exchangeRates, not stored in DB
 }

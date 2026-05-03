@@ -17,4 +17,5 @@ public class DividendInfoCompleteData {
     // where string ticker bigdecimal amount
     Map<String, BigDecimal> amountByMonth;
     BigDecimal yearlyCombineDividendsProjection;
+    Map<String, BigDecimal> fxRates; // current FX rates (currency → rateVsEur) for frontend conversion
 }

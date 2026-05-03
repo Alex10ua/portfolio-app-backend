@@ -9,6 +9,7 @@ import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Service.Dividends.DividendUtils;
 import com.dev.alex.Service.Interface.DividendsService;
+import com.dev.alex.Service.Interface.FxRateService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,15 +25,18 @@ public class DividendsServiceImpl implements DividendsService {
     private final MarketDataServiceImpl marketDataService;
     private final TransactionServiceImpl transactionService;
     private final DividendUtils dividendUtils;
+    private final FxRateService fxRateService;
 
     @Autowired
     public DividendsServiceImpl(HoldingServiceImpl holdingService,
             MarketDataServiceImpl marketDataService,
-            TransactionServiceImpl transactionService) { // << DividendUtils NOT injected
+            TransactionServiceImpl transactionService,
+            FxRateService fxRateService) {
         this.holdingService = holdingService;
         this.marketDataService = marketDataService;
         this.transactionService = transactionService;
-        this.dividendUtils = new DividendUtils(); // << INSTANTIATE IT DIRECTLY
+        this.fxRateService = fxRateService;
+        this.dividendUtils = new DividendUtils();
     }
 
     @Deprecated
@@ -179,6 +183,7 @@ public class DividendsServiceImpl implements DividendsService {
         // 5. Calculate and set yearly dividend projection based on *current* holdings
         calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
 
+        dividendInfoCompleteData.setFxRates(fxRateService.getAllRatesAsMap());
         return dividendInfoCompleteData;
     }
 

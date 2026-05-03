@@ -4,6 +4,7 @@ import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.NonDbModel.HoldingsCompleteData;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Repository.HoldingsRepository;
+import com.dev.alex.Service.Interface.FxRateService;
 import com.dev.alex.Service.Interface.HoldingsCompleteDataService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
         private HoldingServiceImpl holdingService;
         @Autowired
         private MarketDataServiceImpl marketDataService;
+        @Autowired
+        private FxRateService fxRateService;
 
         @Override
         public List<HoldingsCompleteData> getAllHoldingsByPortfolioId(String portfolioId) {
@@ -112,6 +115,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                                         .setScale(2, RoundingMode.HALF_EVEN);
                                 }
                                 holdingsCompleteData.setDailyChange(dailyChange);
+                                holdingsCompleteData.setCurrency(holding.getCurrency());
+                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency()));
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         } else {
                                 holdingsCompleteData.setTicker(holding.getTicker());
@@ -152,6 +157,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                         .setTotalProfitPercentage(dividedYieldPercentage.setScale(2,
                                                                         RoundingMode.HALF_EVEN));
                                 }
+                                holdingsCompleteData.setCurrency(holding.getCurrency());
+                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency()));
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         }
                 }
