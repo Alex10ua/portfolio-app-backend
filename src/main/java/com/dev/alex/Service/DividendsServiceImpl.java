@@ -139,7 +139,7 @@ public class DividendsServiceImpl implements DividendsService {
                 // Filter transactions for the current ticker AND SORT THEM BY DATE
                 List<Transactions> currentTickerTransactions = allPortfolioTransactions.stream()
                         .filter(t -> ticker.equals(t.getTicker()))
-                        .sorted(Comparator.comparing(Transactions::getDate)) // ESSENTIAL
+                        .sorted(Comparator.comparing(Transactions::getDate, Comparator.nullsLast(Comparator.naturalOrder()))) // ESSENTIAL
                         .collect(Collectors.toList());
 
                 transactionsByTickerMap.put(ticker, currentTickerTransactions);
@@ -196,12 +196,15 @@ public class DividendsServiceImpl implements DividendsService {
         List<Holdings> currentHoldings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
         BigDecimal yearlyProjection = BigDecimal.ZERO;
 
-        // Simple in-method cache for market data to avoid redundant calls within this
-        // loop
+        if (currentHoldings == null) {
+            dividendInfoCompleteData.setYearlyCombineDividendsProjection(yearlyProjection);
+            return;
+        }
+
         Map<String, MarketData> marketDataCache = new HashMap<>();
 
         for (Holdings holding : currentHoldings) {
-            if (holding.getAssetType().equals(Assets.STOCK) &&
+            if (Assets.STOCK.equals(holding.getAssetType()) &&
                     holding.getQuantity() != null &&
                     holding.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
 

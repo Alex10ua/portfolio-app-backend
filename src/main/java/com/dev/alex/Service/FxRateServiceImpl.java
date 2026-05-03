@@ -19,6 +19,7 @@ public class FxRateServiceImpl implements FxRateService {
     @Override
     public Map<String, BigDecimal> getAllRatesAsMap() {
         return fxRateRepository.findAll().stream()
+                .filter(r -> r.getCurrency() != null && r.getRateVsEur() != null)
                 .collect(Collectors.toMap(FxRate::getCurrency, FxRate::getRateVsEur));
     }
 
