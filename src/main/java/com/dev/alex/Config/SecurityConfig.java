@@ -21,10 +21,18 @@ public class SecurityConfig {
                     var corsConfiguration = new org.springframework.web.cors.CorsConfiguration();
                     corsConfiguration.setAllowedOrigins(java.util.List.of("http://localhost:3000", "http://localhost:3001", "http://localhost:80", "http://localhost"));
                     corsConfiguration.setAllowedMethods(java.util.List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-                    corsConfiguration.setAllowedHeaders(java.util.List.of("*"));
+                    corsConfiguration.setAllowedHeaders(java.util.List.of("Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"));
                     corsConfiguration.setAllowCredentials(true);
                     return corsConfiguration;
                 }))
+                .headers(headers -> headers
+                        .frameOptions(config -> config.deny())
+                        .contentTypeOptions(Customizer.withDefaults())
+                        .httpStrictTransportSecurity(config -> config
+                                .maxAgeInSeconds(31536000)
+                                .includeSubDomains(true))
+                        .cacheControl(Customizer.withDefaults())
+                )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/users/createUser").permitAll()
                         .anyRequest().authenticated()

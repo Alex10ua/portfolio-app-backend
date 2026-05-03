@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 public class Portfolios {
     @Id
     private String portfolioId;
-    //private Users userId;
+    private String username;
     private String portfolioName;
     private String description;
     private Date createdAt;

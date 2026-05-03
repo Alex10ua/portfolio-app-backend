@@ -9,20 +9,24 @@ import com.dev.alex.Repository.ImportBatchRepository;
 import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.ImportBatchProcessingService;
+import com.dev.alex.Service.PortfolioAccessService;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = "http://localhost:3001")
 public class ImportBatchController {
 
     @Autowired
@@ -35,6 +39,8 @@ public class ImportBatchController {
     private HoldingServiceImpl holdingService;
     @Autowired
     private ImportBatchProcessingService importBatchProcessingService;
+    @Autowired
+    private PortfolioAccessService portfolioAccessService;
 
     @Data
     @AllArgsConstructor
@@ -54,7 +60,9 @@ public class ImportBatchController {
 
     @PostMapping("/{portfolioId}/imports")
     public ResponseEntity<?> createImportBatch(@PathVariable String portfolioId,
-                                               @RequestBody ImportBatchRequest request) {
+                                               @RequestBody ImportBatchRequest request,
+                                               Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         try {
             String batchId = UUID.randomUUID().toString();
 
@@ -90,22 +98,25 @@ public class ImportBatchController {
 
             return ResponseEntity.accepted().body(batch);
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().body(e.getMessage());
+            log.error("Error creating import batch for portfolio {}", portfolioId, e);
+            throw new RuntimeException("Failed to create import batch");
         }
     }
 
     @GetMapping("/{portfolioId}/imports")
-    public ResponseEntity<List<ImportBatch>> getImports(@PathVariable String portfolioId) {
+    public ResponseEntity<List<ImportBatch>> getImports(@PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         List<ImportBatch> batches = importBatchRepository.findAllByPortfolioIdOrderByUploadedAtDesc(portfolioId);
         return ResponseEntity.ok(batches);
     }
 
     @GetMapping("/{portfolioId}/imports/{batchId}")
     public ResponseEntity<?> getImportDetail(@PathVariable String portfolioId,
-                                             @PathVariable String batchId) {
+                                             @PathVariable String batchId,
+                                             Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         Optional<ImportBatch> batch = importBatchRepository.findById(batchId);
-        if (batch.isEmpty()) {
+        if (batch.isEmpty() || !portfolioId.equals(batch.get().getPortfolioId())) {
             return ResponseEntity.notFound().build();
         }
         List<Transactions> transactions = transactionsRepository.findAllByImportBatchId(batchId);
@@ -114,7 +125,14 @@ public class ImportBatchController {
 
     @DeleteMapping("/{portfolioId}/imports/{batchId}")
     public ResponseEntity<Map<String, Boolean>> deleteImportBatch(@PathVariable String portfolioId,
-                                                                   @PathVariable String batchId) {
+                                                                   @PathVariable String batchId,
+                                                                   Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        Optional<ImportBatch> batch = importBatchRepository.findById(batchId);
+        if (batch.isEmpty() || !portfolioId.equals(batch.get().getPortfolioId())) {
+            throw new AccessDeniedException("Batch not found or does not belong to this portfolio");
+        }
+
         List<Transactions> batchTransactions = transactionsRepository.findAllByImportBatchId(batchId);
 
         Set<String> affectedStockTickers = batchTransactions.stream()
@@ -137,13 +155,10 @@ public class ImportBatchController {
                     holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);
                 }
             } catch (Exception e) {
-                // Log but don't fail — transactions are already deleted
-                e.printStackTrace();
+                log.warn("Error cleaning up holding for ticker {} after batch delete", ticker, e);
             }
         }
 
-        Map<String, Boolean> response = new HashMap<>();
-        response.put("deleted", Boolean.TRUE);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(Map.of("deleted", Boolean.TRUE));
     }
 }

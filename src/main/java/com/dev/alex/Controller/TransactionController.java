@@ -9,13 +9,17 @@ import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.CustomAssetServiceImpl;
 import com.dev.alex.Service.FxRateServiceImpl;
 import com.dev.alex.Service.HoldingServiceImpl;
+import com.dev.alex.Service.PortfolioAccessService;
 import com.dev.alex.Service.TransactionServiceImpl;
 import com.dev.alex.Service.TickersServiceImpl;
 import com.dev.alex.Service.WebCalls.FlaskClientService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -24,9 +28,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = "http://localhost:3001") // fix Access-Control-Allow-Origin
 public class TransactionController {
     @Autowired
     private TransactionServiceImpl transactionService;
@@ -44,12 +48,15 @@ public class TransactionController {
     private CustomAssetServiceImpl customAssetService;
     @Autowired
     private FxRateServiceImpl fxRateService;
+    @Autowired
+    private PortfolioAccessService portfolioAccessService;
 
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
     @PostMapping("/{portfolioId}/createTransaction")
     public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction,
-            @PathVariable String portfolioId) {
+            @PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         try {
             transaction.setTransactionId(UUID.randomUUID().toString());
             transaction.setPortfolioId(portfolioId);
@@ -91,20 +98,22 @@ public class TransactionController {
             response.put("save", transactionStatus);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().body(e.getMessage());
+            log.error("Error creating transaction for portfolio {}", portfolioId, e);
+            throw new RuntimeException("Failed to create transaction");
         }
     }
 
     @GetMapping("/{portfolioId}/transactions")
-    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId) {
+    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         List<Transactions> transactions = transactionService.findAllByPortfolioId(portfolioId);
         transactions.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency())));
         return transactions;
     }
 
     @GetMapping("/{portfolioId}/transactions/{year}")
-    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year) {
+    public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         List<Transactions> transactions = transactionService.findBuySellByPortfolioIdAndYear(portfolioId, year);
         transactions.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency())));
         return transactions;
@@ -112,7 +121,8 @@ public class TransactionController {
 
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
     public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions updatedTransaction,
-            @PathVariable String transactionId, @PathVariable String portfolioId) {
+            @PathVariable String transactionId, @PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         transactionService.updateTransaction(updatedTransaction, transactionId, portfolioId);
         // recalculateHoldingFromTransactions works for all asset types:
         // for STOCK it applies split-adjusted calculation; for others splits list is empty (no-op)
@@ -121,7 +131,8 @@ public class TransactionController {
     }
 
     @GetMapping("/{portfolioId}/cashBalance")
-    public ResponseEntity<Map<String, BigDecimal>> getCashBalance(@PathVariable String portfolioId) {
+    public ResponseEntity<Map<String, BigDecimal>> getCashBalance(@PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         List<Transactions> transactions = transactionService.findAllByPortfolioId(portfolioId);
         Map<String, BigDecimal> balance = new HashMap<>();
         for (Transactions t : transactions) {
@@ -138,12 +149,15 @@ public class TransactionController {
     }
 
     @DeleteMapping("/{portfolioId}/transactions/{transactionId}/delete")
-    public ResponseEntity<Map<String, Boolean>> deleteTransaction(@PathVariable String transactionId) {
-        Transactions transaction = transactionsRepository.findById(transactionId).orElseThrow(RuntimeException::new);
+    public ResponseEntity<Map<String, Boolean>> deleteTransaction(@PathVariable String portfolioId,
+            @PathVariable String transactionId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        Transactions transaction = transactionsRepository.findById(transactionId)
+                .orElseThrow(() -> new RuntimeException("Transaction not found"));
+        if (!portfolioId.equals(transaction.getPortfolioId())) {
+            throw new AccessDeniedException("Transaction does not belong to this portfolio");
+        }
         transactionsRepository.deleteById(transactionId);
-        Map<String, Boolean> response = new HashMap<>();
-        response.put("deleted", Boolean.TRUE);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(Map.of("deleted", Boolean.TRUE));
     }
-
 }
