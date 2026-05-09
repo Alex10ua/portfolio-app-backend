@@ -106,6 +106,7 @@ public class HoldingServiceImpl implements HoldingsService {
             newHolding.setTicker(newTransaction.getTicker().toUpperCase());
             newHolding.setQuantity(newTransaction.getQuantity());
             newHolding.setAveragePurchasePrice(BigDecimal.ZERO);
+            newHolding.setCurrency(newTransaction.getCurrency());
             newHolding.setCreatedAt(newTransaction.getDate());
             newHolding.setUpdatedAt(newTransaction.getDate());
             holdingsRepository.save(newHolding);
@@ -238,6 +239,12 @@ public class HoldingServiceImpl implements HoldingsService {
                 ? totalCost.divide(totalShares, MATH_CONTEXT)
                 : BigDecimal.ZERO;
 
+        String derivedCurrency = transactionsList.stream()
+                .filter(tx -> tx.getTransactionType() == TransactionType.BUY && tx.getCurrency() != null)
+                .findFirst()
+                .map(Transactions::getCurrency)
+                .orElse(null);
+
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, upperTicker);
         if (holding == null) {
             holding = new Holdings();
@@ -245,7 +252,10 @@ public class HoldingServiceImpl implements HoldingsService {
             holding.setPortfolioId(portfolioId);
             holding.setAssetType(assetType);
             holding.setTicker(upperTicker);
+            holding.setCurrency(derivedCurrency);
             holding.setCreatedAt(earliestDate);
+        } else if (holding.getCurrency() == null) {
+            holding.setCurrency(derivedCurrency);
         }
         holding.setQuantity(totalShares);
         holding.setAveragePurchasePrice(finalAvgPrice);
@@ -296,6 +306,12 @@ public class HoldingServiceImpl implements HoldingsService {
                 ? totalCost.divide(totalShares, MATH_CONTEXT)
                 : BigDecimal.ZERO;
 
+        String derivedCurrencyCustom = transactionsList.stream()
+                .filter(tx -> tx.getTransactionType() == TransactionType.BUY && tx.getCurrency() != null)
+                .findFirst()
+                .map(Transactions::getCurrency)
+                .orElse(null);
+
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, upperTicker);
         if (holding == null) {
             holding = new Holdings();
@@ -305,7 +321,10 @@ public class HoldingServiceImpl implements HoldingsService {
             holding.setTicker(upperTicker);
             holding.setName(latestTx.getName());
             holding.setPriceNow(latestTx.getPriceNow() != null ? latestTx.getPriceNow() : BigDecimal.ZERO);
+            holding.setCurrency(derivedCurrencyCustom);
             holding.setCreatedAt(earliestDate);
+        } else if (holding.getCurrency() == null) {
+            holding.setCurrency(derivedCurrencyCustom);
         }
         holding.setQuantity(totalShares);
         holding.setAveragePurchasePrice(finalAvgPrice);
@@ -350,6 +369,7 @@ public class HoldingServiceImpl implements HoldingsService {
             newHolding.setQuantity(newTransaction.getQuantity());
             newHolding.setAveragePurchasePrice(BigDecimal.ZERO);
             newHolding.setPriceNow(newTransaction.getPriceNow() != null ? newTransaction.getPriceNow() : BigDecimal.ZERO);
+            newHolding.setCurrency(newTransaction.getCurrency());
             newHolding.setCreatedAt(newTransaction.getDate());
             newHolding.setUpdatedAt(newTransaction.getDate());
             holdingsRepository.save(newHolding);

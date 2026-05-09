@@ -9,6 +9,7 @@ import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Service.Dividends.DividendUtils;
 import com.dev.alex.Service.Interface.DividendsService;
+import com.dev.alex.Service.Interface.FxRateService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,15 +25,18 @@ public class DividendsServiceImpl implements DividendsService {
     private final MarketDataServiceImpl marketDataService;
     private final TransactionServiceImpl transactionService;
     private final DividendUtils dividendUtils;
+    private final FxRateService fxRateService;
 
     @Autowired
     public DividendsServiceImpl(HoldingServiceImpl holdingService,
             MarketDataServiceImpl marketDataService,
-            TransactionServiceImpl transactionService) { // << DividendUtils NOT injected
+            TransactionServiceImpl transactionService,
+            FxRateService fxRateService) {
         this.holdingService = holdingService;
         this.marketDataService = marketDataService;
         this.transactionService = transactionService;
-        this.dividendUtils = new DividendUtils(); // << INSTANTIATE IT DIRECTLY
+        this.fxRateService = fxRateService;
+        this.dividendUtils = new DividendUtils();
     }
 
     @Deprecated
@@ -135,7 +139,7 @@ public class DividendsServiceImpl implements DividendsService {
                 // Filter transactions for the current ticker AND SORT THEM BY DATE
                 List<Transactions> currentTickerTransactions = allPortfolioTransactions.stream()
                         .filter(t -> ticker.equals(t.getTicker()))
-                        .sorted(Comparator.comparing(Transactions::getDate)) // ESSENTIAL
+                        .sorted(Comparator.comparing(Transactions::getDate, Comparator.nullsLast(Comparator.naturalOrder()))) // ESSENTIAL
                         .collect(Collectors.toList());
 
                 transactionsByTickerMap.put(ticker, currentTickerTransactions);
@@ -179,6 +183,7 @@ public class DividendsServiceImpl implements DividendsService {
         // 5. Calculate and set yearly dividend projection based on *current* holdings
         calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
 
+        dividendInfoCompleteData.setFxRates(fxRateService.getAllRatesAsMap());
         return dividendInfoCompleteData;
     }
 
@@ -191,12 +196,15 @@ public class DividendsServiceImpl implements DividendsService {
         List<Holdings> currentHoldings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
         BigDecimal yearlyProjection = BigDecimal.ZERO;
 
-        // Simple in-method cache for market data to avoid redundant calls within this
-        // loop
+        if (currentHoldings == null) {
+            dividendInfoCompleteData.setYearlyCombineDividendsProjection(yearlyProjection);
+            return;
+        }
+
         Map<String, MarketData> marketDataCache = new HashMap<>();
 
         for (Holdings holding : currentHoldings) {
-            if (holding.getAssetType().equals(Assets.STOCK) &&
+            if (Assets.STOCK.equals(holding.getAssetType()) &&
                     holding.getQuantity() != null &&
                     holding.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
 

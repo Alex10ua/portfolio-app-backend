@@ -27,4 +27,6 @@ public class HoldingsCompleteData {
     private BigDecimal totalProfit;
     private BigDecimal totalProfitPercentage;
     private BigDecimal dailyChange;
+    private String currency;
+    private BigDecimal fxRate;
 }

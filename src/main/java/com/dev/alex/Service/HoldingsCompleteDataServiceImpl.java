@@ -4,6 +4,7 @@ import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.NonDbModel.HoldingsCompleteData;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Repository.HoldingsRepository;
+import com.dev.alex.Service.Interface.FxRateService;
 import com.dev.alex.Service.Interface.HoldingsCompleteDataService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
         private HoldingServiceImpl holdingService;
         @Autowired
         private MarketDataServiceImpl marketDataService;
+        @Autowired
+        private FxRateService fxRateService;
 
         @Override
         public List<HoldingsCompleteData> getAllHoldingsByPortfolioId(String portfolioId) {
@@ -112,6 +115,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                                         .setScale(2, RoundingMode.HALF_EVEN);
                                 }
                                 holdingsCompleteData.setDailyChange(dailyChange);
+                                holdingsCompleteData.setCurrency(holding.getCurrency());
+                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency()));
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         } else {
                                 holdingsCompleteData.setTicker(holding.getTicker());
@@ -119,16 +124,14 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 holdingsCompleteData.setName(holding.getName());
                                 holdingsCompleteData.setShareAmount(
                                                 holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
-                                holdingsCompleteData
-                                                .setCostPerShare(holding.getAveragePurchasePrice().setScale(2,
-                                                                RoundingMode.HALF_EVEN));
+                                holdingsCompleteData.setCostPerShare(holding.getAveragePurchasePrice());
                                 BigDecimal costBasicTotalShare = holding.getAveragePurchasePrice()
                                                 .multiply(holding.getQuantity());
                                 holdingsCompleteData
                                                 .setCostBasis(costBasicTotalShare.setScale(2, RoundingMode.HALF_EVEN));
                                 MarketData marketData = marketDataService
                                                 .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
-                                
+
                                 if (marketData == null || marketData.getPrice() == null) {
                                     holdingsCompleteData.setCurrentTotalValue(BigDecimal.ZERO);
                                     holdingsCompleteData.setCurrentShareValue(BigDecimal.ZERO);
@@ -142,8 +145,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                 .multiply(marketData.getPrice())).setScale(2,
                                                                 RoundingMode.HALF_EVEN);
                                 holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
-                                holdingsCompleteData.setCurrentShareValue(
-                                                marketData.getPrice().setScale(2, RoundingMode.HALF_EVEN));
+                                holdingsCompleteData.setCurrentShareValue(marketData.getPrice());
                                 BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(
                                                 2,
                                                 RoundingMode.HALF_EVEN);
@@ -155,6 +157,8 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                         .setTotalProfitPercentage(dividedYieldPercentage.setScale(2,
                                                                         RoundingMode.HALF_EVEN));
                                 }
+                                holdingsCompleteData.setCurrency(holding.getCurrency());
+                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency()));
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         }
                 }

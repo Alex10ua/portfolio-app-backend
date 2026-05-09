@@ -8,11 +8,14 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @Repository
 public interface PortfolioRepository extends MongoRepository<Portfolios, String> {
 
     Portfolios findByPortfolioId(String portfolioId);
+    Portfolios findByPortfolioIdAndUsername(String portfolioId, String username);
+    List<Portfolios> findAllByUsername(String username);
 
     // *** FIX: Use escaped double quotes (\") for JSON keys and string literals ***
     @Query(value = "{ \"portfolioId\": :portfolioId }") // Use :portfolioId placeholder

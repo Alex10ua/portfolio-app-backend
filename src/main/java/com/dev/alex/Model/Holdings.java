@@ -27,6 +27,7 @@ public class Holdings {
     private BigDecimal quantity;
     private BigDecimal averagePurchasePrice;
     private BigDecimal priceNow; // for non stock assets to have current price
+    private String currency;   // native currency of the asset, e.g. "USD", "EUR"
     private String dbAssetUrl; // TODO webui in portfolio(HoldingList) add click on element that opens profile and non stock asset could have url to some asset db website
     private LocalDate createdAt;
     private LocalDate updatedAt;
