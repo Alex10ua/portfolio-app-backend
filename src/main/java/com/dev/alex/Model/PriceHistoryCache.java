@@ -18,5 +18,6 @@ public class PriceHistoryCache {
     @Id
     private String ticker;
     private List<PriceHistoryEntry> history;
+    private List<PriceHistoryEntry> monthlyHistory;
     private LocalDate lastUpdated;
 }

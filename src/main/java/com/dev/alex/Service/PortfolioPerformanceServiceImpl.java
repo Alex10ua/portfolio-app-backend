@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Holdings;
@@ -9,6 +10,7 @@ import com.dev.alex.Model.NonDbModel.PerformancePoint;
 import com.dev.alex.Model.NonDbModel.PriceHistoryEntry;
 import com.dev.alex.Model.PriceHistoryCache;
 import com.dev.alex.Model.Transactions;
+import com.dev.alex.Repository.CustomAssetRepository;
 import com.dev.alex.Repository.PriceHistoryCacheRepository;
 import com.dev.alex.Repository.TransactionsRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -31,6 +34,8 @@ public class PortfolioPerformanceServiceImpl {
     private MarketDataServiceImpl marketDataService;
     @Autowired
     private PriceHistoryCacheRepository priceHistoryCacheRepository;
+    @Autowired
+    private CustomAssetRepository customAssetRepository;
 
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final int SCALE = 2;
@@ -295,6 +300,78 @@ public class PortfolioPerformanceServiceImpl {
         double step = (double) (points.size() - 1) / (maxPoints - 1);
         for (int i = 0; i < maxPoints; i++) {
             result.add(points.get((int) Math.round(i * step)));
+        }
+        return result;
+    }
+
+    public List<PerformancePoint> getMonthlyHistory(String portfolioId) {
+        List<Transactions> allTx = transactionsRepository.findAllByPortfolioIdOrderByDateAsc(portfolioId);
+        List<Holdings> holdings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
+
+        // Stock/crypto price history from cache
+        Map<String, Map<LocalDate, BigDecimal>> stockPrices = new HashMap<>();
+        for (Holdings h : holdings) {
+            if (h.getAssetType() != Assets.STOCK && h.getAssetType() != Assets.CRYPTO) continue;
+            PriceHistoryCache cache = priceHistoryCacheRepository.findById(h.getTicker()).orElse(null);
+            if (cache != null && cache.getHistory() != null) {
+                Map<LocalDate, BigDecimal> priceMap = cache.getHistory().stream()
+                        .collect(Collectors.toMap(PriceHistoryEntry::getDate, PriceHistoryEntry::getPrice, (a, b) -> b));
+                stockPrices.put(h.getTicker(), priceMap);
+            }
+        }
+
+        // Custom asset price history from embedded priceHistory list
+        Map<String, Map<LocalDate, BigDecimal>> customPrices = new HashMap<>();
+        for (Holdings h : holdings) {
+            if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) continue;
+            CustomAsset ca = customAssetRepository.findByPortfolioIdAndTicker(portfolioId, h.getTicker()).orElse(null);
+            if (ca != null && ca.getPriceHistory() != null && !ca.getPriceHistory().isEmpty()) {
+                Map<LocalDate, BigDecimal> priceMap = ca.getPriceHistory().stream()
+                        .collect(Collectors.toMap(PriceHistoryEntry::getDate, PriceHistoryEntry::getPrice, (a, b) -> b));
+                customPrices.put(h.getTicker(), priceMap);
+            } else if (h.getPriceNow() != null) {
+                // Fall back to flat current price if no history recorded yet
+                customPrices.put(h.getTicker(), Map.of(LocalDate.now(), h.getPriceNow()));
+            }
+        }
+
+        Map<String, List<Transactions>> txByTicker = allTx.stream()
+                .filter(t -> t.getTicker() != null)
+                .collect(Collectors.groupingBy(Transactions::getTicker));
+
+        LocalDate firstTxDate = allTx.stream()
+                .map(Transactions::getDate)
+                .filter(Objects::nonNull)
+                .min(LocalDate::compareTo)
+                .orElse(LocalDate.now());
+
+        YearMonth startMonth = YearMonth.from(firstTxDate);
+        YearMonth endMonth = YearMonth.now();
+
+        List<PerformancePoint> result = new ArrayList<>();
+        YearMonth current = startMonth;
+        while (!current.isAfter(endMonth)) {
+            LocalDate date = current.equals(endMonth)
+                    ? LocalDate.now()
+                    : current.atEndOfMonth();
+
+            BigDecimal portfolioValue = ZERO;
+            for (Holdings h : holdings) {
+                String ticker = h.getTicker();
+                BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), date);
+                if (qty.compareTo(ZERO) <= 0) continue;
+
+                Map<LocalDate, BigDecimal> priceMap = (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO)
+                        ? stockPrices.get(ticker)
+                        : customPrices.get(ticker);
+
+                BigDecimal price = priceOnOrBefore(priceMap, date);
+                if (price != null && price.compareTo(ZERO) > 0) {
+                    portfolioValue = portfolioValue.add(qty.multiply(price));
+                }
+            }
+            result.add(new PerformancePoint(date, portfolioValue.setScale(SCALE, RoundingMode.HALF_EVEN)));
+            current = current.plusMonths(1);
         }
         return result;
     }
