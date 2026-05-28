@@ -26,6 +26,12 @@ public class FxRateServiceImpl implements FxRateService {
     @Override
     public BigDecimal getRateForCurrency(String currency) {
         if (currency == null) return BigDecimal.ONE;
+        // GBp (pence) = GBP / 100; multiply rate by 100 so frontend division works correctly
+        if ("GBp".equals(currency) || "GBx".equals(currency)) {
+            return fxRateRepository.findById("GBP")
+                    .map(r -> r.getRateVsEur().multiply(BigDecimal.valueOf(100)))
+                    .orElse(BigDecimal.valueOf(100));
+        }
         return fxRateRepository.findById(currency)
                 .map(FxRate::getRateVsEur)
                 .orElse(BigDecimal.ONE);
