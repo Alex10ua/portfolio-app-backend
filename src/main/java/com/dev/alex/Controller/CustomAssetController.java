@@ -1,6 +1,7 @@
 package com.dev.alex.Controller;
 
 import com.dev.alex.Model.CustomAsset;
+import com.dev.alex.Model.NonDbModel.PriceHistoryEntry;
 import com.dev.alex.Service.CustomAssetServiceImpl;
 import com.dev.alex.Service.PortfolioAccessService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -80,5 +81,15 @@ public class CustomAssetController {
             return ResponseEntity.badRequest().body("Field 'price' is required");
         }
         return ResponseEntity.ok(customAssetService.updatePrice(portfolioId, ticker, newPrice));
+    }
+
+    @Operation(summary = "Bulk-merge price history entries (dedup by date, updates priceNow to latest entry)")
+    @PostMapping("/{portfolioId}/custom-assets/{ticker}/price-history/bulk")
+    public ResponseEntity<?> bulkMergePriceHistory(@PathVariable String portfolioId,
+                                                    @PathVariable String ticker,
+                                                    @RequestBody List<PriceHistoryEntry> entries,
+                                                    Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        return ResponseEntity.ok(customAssetService.bulkMergePriceHistory(portfolioId, ticker, entries));
     }
 }

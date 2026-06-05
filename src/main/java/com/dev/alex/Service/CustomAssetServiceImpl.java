@@ -12,9 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -110,6 +109,47 @@ public class CustomAssetServiceImpl implements CustomAssetService {
             marketData.setPrice(newPrice);
             marketData.setUpdatedAt(LocalDate.now());
             marketDataRepository.save(marketData);
+        }
+
+        return customAssetRepository.save(asset);
+    }
+
+    public CustomAsset bulkMergePriceHistory(String portfolioId, String ticker, List<PriceHistoryEntry> entries) {
+        CustomAsset asset = findByPortfolioIdAndTicker(portfolioId, ticker);
+
+        // Merge existing + new entries by date (new entries overwrite on same date)
+        Map<LocalDate, BigDecimal> historyMap = new LinkedHashMap<>();
+        for (PriceHistoryEntry e : asset.getPriceHistory()) {
+            if (e.getDate() != null) historyMap.put(e.getDate(), e.getPrice());
+        }
+        LocalDate latestDate = null;
+        BigDecimal latestPrice = null;
+        for (PriceHistoryEntry e : entries) {
+            if (e.getDate() == null || e.getPrice() == null) continue;
+            historyMap.put(e.getDate(), e.getPrice());
+            if (latestDate == null || e.getDate().isAfter(latestDate)) {
+                latestDate = e.getDate();
+                latestPrice = e.getPrice();
+            }
+        }
+
+        List<PriceHistoryEntry> merged = historyMap.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> new PriceHistoryEntry(e.getKey(), e.getValue()))
+                .collect(Collectors.toList());
+        asset.setPriceHistory(merged);
+
+        if (latestPrice != null) {
+            asset.setPriceNow(latestPrice);
+            asset.setUpdatedAt(latestDate);
+
+            MarketData marketData = marketDataRepository.findByTicker(ticker.toUpperCase());
+            if (marketData != null) {
+                marketData.setPriceYesterday(marketData.getPrice());
+                marketData.setPrice(latestPrice);
+                marketData.setUpdatedAt(latestDate);
+                marketDataRepository.save(marketData);
+            }
         }
 
         return customAssetRepository.save(asset);
