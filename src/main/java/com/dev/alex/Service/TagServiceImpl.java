@@ -20,19 +20,19 @@ public class TagServiceImpl implements TagService {
     private TickerTagsRepository tickerTagsRepository;
 
     @Override
-    public List<TickerTags> getAllTagsForUser(String username) {
-        return tickerTagsRepository.findAllByUsername(username);
+    public List<TickerTags> getAllTagsForUser(String username, String portfolioId) {
+        return tickerTagsRepository.findAllByUsernameAndPortfolioId(username, portfolioId);
     }
 
     @Override
-    public TickerTags getTagsForTicker(String username, String ticker) {
+    public TickerTags getTagsForTicker(String username, String portfolioId, String ticker) {
         return tickerTagsRepository
-                .findByUsernameAndTicker(username, ticker.toUpperCase())
-                .orElse(new TickerTags(null, username, ticker.toUpperCase(), new ArrayList<>(), LocalDate.now()));
+                .findByUsernameAndPortfolioIdAndTicker(username, portfolioId, ticker.toUpperCase())
+                .orElse(new TickerTags(null, username, portfolioId, ticker.toUpperCase(), new ArrayList<>(), LocalDate.now()));
     }
 
     @Override
-    public TickerTags setTagsForTicker(String username, String ticker, List<String> tags) {
+    public TickerTags setTagsForTicker(String username, String portfolioId, String ticker, List<String> tags) {
         String normalizedTicker = ticker.toUpperCase();
 
         List<String> normalized = tags.stream()
@@ -41,15 +41,15 @@ public class TagServiceImpl implements TagService {
                 .distinct()
                 .collect(Collectors.toList());
 
-        Optional<TickerTags> existing = tickerTagsRepository.findByUsernameAndTicker(username, normalizedTicker);
+        Optional<TickerTags> existing = tickerTagsRepository.findByUsernameAndPortfolioIdAndTicker(username, portfolioId, normalizedTicker);
 
         if (normalized.isEmpty()) {
             existing.ifPresent(tickerTagsRepository::delete);
-            return new TickerTags(null, username, normalizedTicker, new ArrayList<>(), LocalDate.now());
+            return new TickerTags(null, username, portfolioId, normalizedTicker, new ArrayList<>(), LocalDate.now());
         }
 
         TickerTags doc = existing.orElseGet(() ->
-                new TickerTags(UUID.randomUUID().toString(), username, normalizedTicker, normalized, LocalDate.now()));
+                new TickerTags(UUID.randomUUID().toString(), username, portfolioId, normalizedTicker, normalized, LocalDate.now()));
 
         doc.setTags(normalized);
         doc.setUpdatedAt(LocalDate.now());
@@ -58,8 +58,8 @@ public class TagServiceImpl implements TagService {
     }
 
     @Override
-    public List<String> getAllDistinctTagNames(String username) {
-        return tickerTagsRepository.findAllByUsername(username).stream()
+    public List<String> getAllDistinctTagNames(String username, String portfolioId) {
+        return tickerTagsRepository.findAllByUsernameAndPortfolioId(username, portfolioId).stream()
                 .flatMap(tt -> tt.getTags().stream())
                 .distinct()
                 .sorted()

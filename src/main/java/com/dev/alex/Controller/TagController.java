@@ -18,25 +18,28 @@ public class TagController {
     private TagService tagService;
 
     @GetMapping
-    public ResponseEntity<List<TickerTags>> getAllTags(Authentication authentication) {
-        return ResponseEntity.ok(tagService.getAllTagsForUser(authentication.getName()));
+    public ResponseEntity<List<TickerTags>> getAllTags(@RequestParam String portfolioId, Authentication authentication) {
+        return ResponseEntity.ok(tagService.getAllTagsForUser(authentication.getName(), portfolioId));
     }
 
     @GetMapping("/names")
-    public ResponseEntity<List<String>> getTagNames(Authentication authentication) {
-        return ResponseEntity.ok(tagService.getAllDistinctTagNames(authentication.getName()));
+    public ResponseEntity<List<String>> getTagNames(@RequestParam String portfolioId, Authentication authentication) {
+        return ResponseEntity.ok(tagService.getAllDistinctTagNames(authentication.getName(), portfolioId));
     }
 
     @GetMapping("/{ticker}")
-    public ResponseEntity<TickerTags> getTagsForTicker(@PathVariable String ticker, Authentication authentication) {
-        return ResponseEntity.ok(tagService.getTagsForTicker(authentication.getName(), ticker));
+    public ResponseEntity<TickerTags> getTagsForTicker(@PathVariable String ticker,
+                                                        @RequestParam String portfolioId,
+                                                        Authentication authentication) {
+        return ResponseEntity.ok(tagService.getTagsForTicker(authentication.getName(), portfolioId, ticker));
     }
 
     @PutMapping("/{ticker}")
     public ResponseEntity<TickerTags> setTagsForTicker(@PathVariable String ticker,
+                                                        @RequestParam String portfolioId,
                                                         @RequestBody Map<String, List<String>> body,
                                                         Authentication authentication) {
         List<String> tags = body.getOrDefault("tags", List.of());
-        return ResponseEntity.ok(tagService.setTagsForTicker(authentication.getName(), ticker, tags));
+        return ResponseEntity.ok(tagService.setTagsForTicker(authentication.getName(), portfolioId, ticker, tags));
     }
 }

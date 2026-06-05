@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Document(collection = "tickerTags")
-@CompoundIndex(def = "{'username': 1, 'ticker': 1}", unique = true)
+@CompoundIndex(def = "{'username': 1, 'portfolioId': 1, 'ticker': 1}", unique = true)
 @AllArgsConstructor
 @NoArgsConstructor
 @Data
@@ -19,6 +19,7 @@ public class TickerTags {
     @Id
     private String id;
     private String username;
+    private String portfolioId;
     private String ticker;
     private List<String> tags;
     private LocalDate updatedAt;

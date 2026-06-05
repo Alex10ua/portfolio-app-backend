@@ -9,6 +9,7 @@ import java.util.Optional;
 
 @Repository
 public interface TickerTagsRepository extends MongoRepository<TickerTags, String> {
-    Optional<TickerTags> findByUsernameAndTicker(String username, String ticker);
+    Optional<TickerTags> findByUsernameAndPortfolioIdAndTicker(String username, String portfolioId, String ticker);
+    List<TickerTags> findAllByUsernameAndPortfolioId(String username, String portfolioId);
     List<TickerTags> findAllByUsername(String username);
 }
