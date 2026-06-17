@@ -114,12 +114,15 @@ public class DividendsServiceImpl implements DividendsService {
         Map<String, List<Transactions>> transactionsByTickerMap = new HashMap<>(); // Will store sorted transactions
         Map<String, List<Splits>> marketSplitsByTicker = new HashMap<>(); // Will store sorted splits
         List<String> tickersWithDividendData = new ArrayList<>(); // Tickers for which we found dividend market data
+        Map<String, BigDecimal> tickerDivisor = new HashMap<>(); // currency normalization (e.g. GBp pence → GBP)
 
         if (allPortfolioTransactions == null || allPortfolioTransactions.isEmpty()) {
             // No transactions, so no historical dividends. Initialize and return.
             dividendInfoCompleteData.setTickerAmount(receivedDividendsPerTickerList);
             dividendInfoCompleteData.setAmountByMonth(new HashMap<>());
-            calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
+            dividendInfoCompleteData.setDisplayCurrency("USD");
+            calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId,
+                    fxRateService.getRateForCurrency("USD"));
             return dividendInfoCompleteData;
         }
 
@@ -129,7 +132,15 @@ public class DividendsServiceImpl implements DividendsService {
                 .filter(Objects::nonNull) // Ensure ticker is not null
                 .collect(Collectors.toSet());
 
-        // 3. Process each unique ticker
+        // 3. Process each unique ticker.
+        // Dividend amounts come from MarketData, so the native currency is the
+        // MarketData currency (e.g. "GBp" pence) — NOT the transaction currency
+        // (e.g. "GBP" pounds). Collect raw native amounts + per-ticker FX rate first;
+        // the display currency / conversion is applied afterwards.
+        Map<String, BigDecimal> rawTickerAmount = new HashMap<>(); // native-currency totals
+        Map<String, BigDecimal> tickerNativeRate = new HashMap<>(); // rateVsEur of each ticker's native currency
+        Set<String> marketCurrencies = new HashSet<>(); // normalized native currencies (GBp/GBx → GBP)
+
         for (String ticker : uniqueTickers) {
             MarketData marketData = marketDataService.getMarketDataByTicker(ticker);
 
@@ -145,24 +156,45 @@ public class DividendsServiceImpl implements DividendsService {
                 transactionsByTickerMap.put(ticker, currentTickerTransactions);
                 marketDividendsByTicker.put(ticker, marketData.getDividends());
 
+                String nativeCurrency = marketData.getCurrency();
+                tickerNativeRate.put(ticker, safeRate(fxRateService.getRateForCurrency(nativeCurrency)));
+                marketCurrencies.add(normalizeCurrency(nativeCurrency));
+
                 // Get splits, ensure non-null, AND SORT THEM BY DATE
                 List<Splits> tickerSplits = (marketData.getSplits() == null) ? new ArrayList<>()
                         : new ArrayList<>(marketData.getSplits());
                 tickerSplits.sort(Comparator.comparing(Splits::getSplitDate)); // ESSENTIAL
                 marketSplitsByTicker.put(ticker, tickerSplits);
 
-                // Calculate total received dividends for this stock based on its transaction
-                // history
-                // using DividendUtils
-                BigDecimal receivedDividendsForStock = dividendUtils.calculateAllDividendsByStockAuto(
+                // Total received dividends for this stock in its native currency
+                rawTickerAmount.put(ticker, dividendUtils.calculateAllDividendsByStockAuto(
                         marketData.getDividends(),
                         currentTickerTransactions,
-                        tickerSplits);
-
-                Map<String, BigDecimal> receivedAmountMap = new HashMap<>();
-                receivedAmountMap.put(ticker, receivedDividendsForStock);
-                receivedDividendsPerTickerList.add(receivedAmountMap);
+                        tickerSplits));
             }
+        }
+
+        // Determine display currency: USD if dividend stocks span multiple
+        // currencies, otherwise the single currency they pay in.
+        String displayCurrency = marketCurrencies.size() == 1
+                ? marketCurrencies.iterator().next()
+                : "USD";
+        dividendInfoCompleteData.setDisplayCurrency(displayCurrency);
+        BigDecimal targetRate = safeRate(fxRateService.getRateForCurrency(displayCurrency)); // units of display ccy per 1 EUR
+
+        // Build per-ticker divisor (native → display): amount / (nativeRate / targetRate)
+        for (String ticker : tickersWithDividendData) {
+            BigDecimal nativeRate = tickerNativeRate.getOrDefault(ticker, BigDecimal.ONE);
+            BigDecimal divisor = nativeRate.divide(targetRate, 10, java.math.RoundingMode.HALF_UP);
+            tickerDivisor.put(ticker, divisor);
+
+            BigDecimal amount = rawTickerAmount.getOrDefault(ticker, BigDecimal.ZERO);
+            if (divisor.compareTo(BigDecimal.ONE) != 0) {
+                amount = amount.divide(divisor, 10, java.math.RoundingMode.HALF_UP);
+            }
+            Map<String, BigDecimal> receivedAmountMap = new HashMap<>();
+            receivedAmountMap.put(ticker, amount);
+            receivedDividendsPerTickerList.add(receivedAmountMap);
         }
 
         // 4. Set results in DividendInfoCompleteData
@@ -175,16 +207,28 @@ public class DividendsServiceImpl implements DividendsService {
                     transactionsByTickerMap,
                     marketDividendsByTicker,
                     marketSplitsByTicker,
-                    tickersWithDividendData));
+                    tickersWithDividendData,
+                    tickerDivisor));
         } else {
             dividendInfoCompleteData.setAmountByMonth(new HashMap<>());
         }
 
         // 5. Calculate and set yearly dividend projection based on *current* holdings
-        calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
+        calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId, targetRate);
 
         dividendInfoCompleteData.setFxRates(fxRateService.getAllRatesAsMap());
         return dividendInfoCompleteData;
+    }
+
+    /** GBp/GBx pence collapse to GBP for display-currency purposes. */
+    private String normalizeCurrency(String currency) {
+        if (currency == null) return "USD";
+        return ("GBp".equals(currency) || "GBx".equals(currency)) ? "GBP" : currency;
+    }
+
+    /** Falls back to 1 for null/zero rates so division stays safe. */
+    private BigDecimal safeRate(BigDecimal rate) {
+        return (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) ? BigDecimal.ONE : rate;
     }
 
     /**
@@ -192,7 +236,7 @@ public class DividendsServiceImpl implements DividendsService {
      * based on current holdings in the portfolio.
      */
     private void calculateAndSetYearlyProjection(DividendInfoCompleteData dividendInfoCompleteData,
-            String portfolioId) {
+            String portfolioId, BigDecimal targetRate) {
         List<Holdings> currentHoldings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
         BigDecimal yearlyProjection = BigDecimal.ZERO;
 
@@ -212,7 +256,17 @@ public class DividendsServiceImpl implements DividendsService {
                         tickerKey -> marketDataService.getMarketDataByTicker(tickerKey));
 
                 if (md != null && md.getYearlyDividend() != null) {
-                    yearlyProjection = yearlyProjection.add(md.getYearlyDividend().multiply(holding.getQuantity()));
+                    BigDecimal projected = md.getYearlyDividend().multiply(holding.getQuantity());
+                    // yearlyDividend is in MarketData currency (e.g. GBp pence), not the holding's.
+                    // native → display currency: amount / (nativeRate / targetRate)
+                    BigDecimal nativeRate = safeRate(fxRateService.getRateForCurrency(md.getCurrency()));
+                    BigDecimal divisor = (targetRate == null || targetRate.compareTo(BigDecimal.ZERO) == 0)
+                            ? nativeRate
+                            : nativeRate.divide(targetRate, 10, java.math.RoundingMode.HALF_UP);
+                    if (divisor.compareTo(BigDecimal.ONE) != 0) {
+                        projected = projected.divide(divisor, 10, java.math.RoundingMode.HALF_UP);
+                    }
+                    yearlyProjection = yearlyProjection.add(projected);
                 }
             }
         }

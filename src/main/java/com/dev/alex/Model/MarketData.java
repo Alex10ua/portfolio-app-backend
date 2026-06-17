@@ -30,6 +30,7 @@ public class MarketData {
     private BigDecimal yearlyDividend;
     private List<Dividend> dividends;
     private List<Splits> splits;
+    private String currency; // currency of price/dividends, e.g. "GBp" (pence) vs transaction "GBP"
     private String country;
     private String sector;
     private String industry;

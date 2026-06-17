@@ -125,6 +125,20 @@ public class DividendUtils {
             Map<String, List<Dividend>> marketDividendsByTicker,
             Map<String, List<Splits>> marketSplitsByTicker,
             List<String> tickersToProcess) {
+        return calculateDividendsPerMonthAuto(transactionsByTicker, marketDividendsByTicker,
+                marketSplitsByTicker, tickersToProcess, Collections.emptyMap());
+    }
+
+    /**
+     * Same as above but scales each ticker's per-instance amount by a divisor
+     * (e.g. 100 for GBp/GBx pence-quoted stocks so the result is in major units).
+     */
+    public Map<String, BigDecimal> calculateDividendsPerMonthAuto(
+            Map<String, List<Transactions>> transactionsByTicker,
+            Map<String, List<Dividend>> marketDividendsByTicker,
+            Map<String, List<Splits>> marketSplitsByTicker,
+            List<String> tickersToProcess,
+            Map<String, BigDecimal> tickerDivisor) {
 
         Map<String, BigDecimal> monthDividendsMap = new TreeMap<>(); // TreeMap to keep months sorted
 
@@ -132,6 +146,7 @@ public class DividendUtils {
             List<Dividend> dividendList = marketDividendsByTicker.get(ticker);
             List<Transactions> stockTransactions = transactionsByTicker.getOrDefault(ticker, Collections.emptyList());
             List<Splits> stockSplits = marketSplitsByTicker.getOrDefault(ticker, Collections.emptyList());
+            BigDecimal divisor = tickerDivisor.getOrDefault(ticker, BigDecimal.ONE);
 
             if (dividendList == null || dividendList.isEmpty()) {
                 continue;
@@ -144,6 +159,10 @@ public class DividendUtils {
 
                 if (sharesHeldOnExDate.compareTo(ZERO) > 0) {
                     BigDecimal dividendReceivedForThisInstance = sharesHeldOnExDate.multiply(dividend.getDividendAmount());
+                    if (divisor.compareTo(BigDecimal.ONE) != 0) {
+                        dividendReceivedForThisInstance = dividendReceivedForThisInstance
+                                .divide(divisor, 10, RoundingMode.HALF_UP);
+                    }
                     String monthKey = exDividendDate.format(YEAR_MONTH_FORMATTER);
                     monthDividendsMap.merge(monthKey, dividendReceivedForThisInstance, BigDecimal::add);
                 }

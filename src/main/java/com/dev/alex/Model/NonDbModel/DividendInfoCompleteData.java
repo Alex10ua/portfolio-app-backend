@@ -18,4 +18,5 @@ public class DividendInfoCompleteData {
     Map<String, BigDecimal> amountByMonth;
     BigDecimal yearlyCombineDividendsProjection;
     Map<String, BigDecimal> fxRates; // current FX rates (currency → rateVsEur) for frontend conversion
+    String displayCurrency; // currency all amounts are expressed in (USD if multi-currency, else the single currency)
 }
