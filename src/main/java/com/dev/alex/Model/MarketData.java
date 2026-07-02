@@ -34,6 +34,7 @@ public class MarketData {
     private String country;
     private String sector;
     private String industry;
+    private Long sharesOutstanding; // total shares outstanding from provider (Yahoo)
     private LocalDate updatedAt;
 
     public MarketData(BigDecimal price, LocalDate updatedAt, String ticker) {

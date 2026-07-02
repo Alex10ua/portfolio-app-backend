@@ -77,6 +77,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
                                 holdingsCompleteData.setCurrentShareValue(
                                                 marketData.getPrice().setScale(2, RoundingMode.HALF_EVEN));
+                                holdingsCompleteData.setSharesOutstanding(marketData.getSharesOutstanding());
                                 if (marketData.getYearlyDividend() != null) {
                                         holdingsCompleteData.setDividend(marketData.getYearlyDividend());
                                         divisionResult = marketData.getYearlyDividend().divide(marketData.getPrice(),

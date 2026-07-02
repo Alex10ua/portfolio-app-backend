@@ -29,4 +29,5 @@ public class HoldingsCompleteData {
     private BigDecimal dailyChange;
     private String currency;
     private BigDecimal fxRate;
+    private Long sharesOutstanding; // total shares outstanding (STOCK only); used by Ownership view
 }
