@@ -147,6 +147,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                                 RoundingMode.HALF_EVEN);
                                 holdingsCompleteData.setCurrentTotalValue(currentTotalValueShares);
                                 holdingsCompleteData.setCurrentShareValue(marketData.getPrice());
+                                holdingsCompleteData.setSharesOutstanding(marketData.getSharesOutstanding());
                                 BigDecimal totalProfit = currentTotalValueShares.subtract(costBasicTotalShare).setScale(
                                                 2,
                                                 RoundingMode.HALF_EVEN);

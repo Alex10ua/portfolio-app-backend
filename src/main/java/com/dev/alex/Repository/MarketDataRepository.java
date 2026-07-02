@@ -22,7 +22,7 @@ public interface MarketDataRepository extends MongoRepository<MarketData, String
                              @Param("price") BigDecimal price);
 
     @Query(value = "{'ticker': :#{#ticker}}",
-           fields = "{'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1}")
+           fields = "{'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1, 'sharesOutstanding' : 1, 'name' : 1}")
     MarketData findByTickerForHoldingsPage(@Param("ticker") String ticker);
 
     @Query(value = "{'ticker' : #{#ticker}}")

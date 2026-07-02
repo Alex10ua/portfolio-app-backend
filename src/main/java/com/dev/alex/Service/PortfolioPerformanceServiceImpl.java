@@ -8,6 +8,7 @@ import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.PerformanceData;
 import com.dev.alex.Model.NonDbModel.PerformancePoint;
 import com.dev.alex.Model.NonDbModel.PriceHistoryEntry;
+import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.PriceHistoryCache;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.CustomAssetRepository;
@@ -46,10 +47,11 @@ public class PortfolioPerformanceServiceImpl {
     public PerformanceData getPerformance(String portfolioId, String period) {
         List<Transactions> allTx = transactionsRepository.findAllByPortfolioIdOrderByDateAsc(portfolioId);
         List<Holdings> holdings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
+        Map<String, List<Splits>> splitsByTicker = loadSplits(holdings);
 
         BigDecimal totalInvested = calcTotalInvested(allTx);
         BigDecimal totalDividends = calcTotalDividends(allTx);
-        BigDecimal realizedPnL = calcRealizedPnL(allTx);
+        BigDecimal realizedPnL = calcRealizedPnL(allTx, splitsByTicker);
 
         BigDecimal currentValue = ZERO;
         BigDecimal openCostBasis = ZERO;
@@ -73,7 +75,7 @@ public class PortfolioPerformanceServiceImpl {
                 : ZERO;
 
         BigDecimal xirr = calcXirr(allTx, currentValue);
-        List<PerformancePoint> timeSeries = buildTimeSeries(portfolioId, holdings, allTx, period);
+        List<PerformancePoint> timeSeries = buildTimeSeries(portfolioId, holdings, allTx, period, splitsByTicker);
 
         PerformanceData data = new PerformanceData();
         data.setTotalInvested(totalInvested.setScale(SCALE, RoundingMode.HALF_EVEN));
@@ -108,8 +110,23 @@ public class PortfolioPerformanceServiceImpl {
                 .reduce(ZERO, BigDecimal::add);
     }
 
-    private BigDecimal calcRealizedPnL(List<Transactions> txList) {
-        Map<String, Deque<BigDecimal[]>> buyLots = new HashMap<>();
+    /** FIFO buy lot; qty/price stay in the lot's own date basis, split-adjusted at match time. */
+    private static final class Lot {
+        BigDecimal qty;
+        final BigDecimal price;
+        final BigDecimal commPerShare;
+        final LocalDate date;
+
+        Lot(BigDecimal qty, BigDecimal price, BigDecimal commPerShare, LocalDate date) {
+            this.qty = qty;
+            this.price = price;
+            this.commPerShare = commPerShare;
+            this.date = date;
+        }
+    }
+
+    private BigDecimal calcRealizedPnL(List<Transactions> txList, Map<String, List<Splits>> splitsByTicker) {
+        Map<String, Deque<Lot>> buyLots = new HashMap<>();
         BigDecimal realized = ZERO;
 
         for (Transactions tx : txList) {
@@ -117,27 +134,35 @@ public class PortfolioPerformanceServiceImpl {
             if (key == null || tx.getQuantity() == null || tx.getPrice() == null) continue;
 
             if (tx.getTransactionType() == TransactionType.BUY) {
-                BigDecimal commPerShare = commissionPerShare(tx);
                 buyLots.computeIfAbsent(key, k -> new ArrayDeque<>())
-                        .addLast(new BigDecimal[]{tx.getQuantity(), tx.getPrice(), commPerShare});
+                        .addLast(new Lot(tx.getQuantity(), tx.getPrice(), commissionPerShare(tx), tx.getDate()));
 
             } else if (tx.getTransactionType() == TransactionType.SELL) {
-                Deque<BigDecimal[]> lots = buyLots.getOrDefault(key, new ArrayDeque<>());
+                Deque<Lot> lots = buyLots.getOrDefault(key, new ArrayDeque<>());
+                List<Splits> splits = splitsByTicker.get(key);
                 BigDecimal sellCommPerShare = commissionPerShare(tx);
                 BigDecimal remaining = tx.getQuantity();
 
                 while (remaining.compareTo(ZERO) > 0 && !lots.isEmpty()) {
-                    BigDecimal[] lot = lots.peekFirst();
-                    BigDecimal matched = remaining.min(lot[0]);
+                    Lot lot = lots.peekFirst();
+                    // convert lot to the sell date's share basis
+                    BigDecimal f = (lot.date != null && tx.getDate() != null)
+                            ? splitFactor(splits, lot.date, tx.getDate())
+                            : BigDecimal.ONE;
+                    BigDecimal lotQtyAtSell = lot.qty.multiply(f);
+                    BigDecimal lotPriceAtSell = lot.price.divide(f, 8, RoundingMode.HALF_EVEN);
+                    BigDecimal lotCommAtSell = lot.commPerShare.divide(f, 8, RoundingMode.HALF_EVEN);
+
+                    BigDecimal matched = remaining.min(lotQtyAtSell);
                     BigDecimal gain = tx.getPrice()
-                            .subtract(lot[1])
+                            .subtract(lotPriceAtSell)
                             .subtract(sellCommPerShare)
-                            .subtract(lot[2])
+                            .subtract(lotCommAtSell)
                             .multiply(matched);
                     realized = realized.add(gain);
-                    lot[0] = lot[0].subtract(matched);
+                    lot.qty = lot.qty.subtract(matched.divide(f, 8, RoundingMode.HALF_EVEN));
                     remaining = remaining.subtract(matched);
-                    if (lot[0].compareTo(ZERO) == 0) lots.pollFirst();
+                    if (lot.qty.compareTo(ZERO) <= 0) lots.pollFirst();
                 }
             }
         }
@@ -206,7 +231,8 @@ public class PortfolioPerformanceServiceImpl {
     }
 
     private List<PerformancePoint> buildTimeSeries(String portfolioId, List<Holdings> holdings,
-                                                    List<Transactions> allTx, String period) {
+                                                    List<Transactions> allTx, String period,
+                                                    Map<String, List<Splits>> splitsByTicker) {
         LocalDate endDate = LocalDate.now();
         LocalDate startDate = resolveStartDate(period, endDate, allTx);
 
@@ -242,7 +268,8 @@ public class PortfolioPerformanceServiceImpl {
             BigDecimal portfolioValue = ZERO;
             for (Holdings h : holdings) {
                 String ticker = h.getTicker();
-                BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), current);
+                BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), current,
+                        splitsByTicker.get(ticker));
                 if (qty.compareTo(ZERO) <= 0) continue;
 
                 BigDecimal price;
@@ -262,15 +289,45 @@ public class PortfolioPerformanceServiceImpl {
         return downsample(points, 200);
     }
 
-    private BigDecimal quantityAtDate(List<Transactions> txForTicker, LocalDate date) {
+    private BigDecimal quantityAtDate(List<Transactions> txForTicker, LocalDate date, List<Splits> splits) {
         BigDecimal qty = ZERO;
         for (Transactions tx : txForTicker) {
             if (tx.getDate() == null || tx.getDate().isAfter(date)) continue;
             if (tx.getQuantity() == null) continue;
-            if (tx.getTransactionType() == TransactionType.BUY) qty = qty.add(tx.getQuantity());
-            else if (tx.getTransactionType() == TransactionType.SELL) qty = qty.subtract(tx.getQuantity());
+            // convert tx-date share count to the as-of date's basis
+            BigDecimal eff = tx.getQuantity().multiply(splitFactor(splits, tx.getDate(), date));
+            if (tx.getTransactionType() == TransactionType.BUY) qty = qty.add(eff);
+            else if (tx.getTransactionType() == TransactionType.SELL) qty = qty.subtract(eff);
         }
         return qty.max(ZERO);
+    }
+
+    /**
+     * Product of split ratios with splitDate in (from, to] — converts a share count
+     * from the `from` date's basis to the `to` date's basis. 1 when no splits apply.
+     */
+    private BigDecimal splitFactor(List<Splits> splits, LocalDate from, LocalDate to) {
+        if (splits == null || splits.isEmpty()) return BigDecimal.ONE;
+        BigDecimal f = BigDecimal.ONE;
+        for (Splits s : splits) {
+            if (s.getSplitDate() == null || s.getRatioSplit() == null) continue;
+            if (s.getSplitDate().isAfter(from) && !s.getSplitDate().isAfter(to)) {
+                f = f.multiply(s.getRatioSplit());
+            }
+        }
+        return f;
+    }
+
+    private Map<String, List<Splits>> loadSplits(List<Holdings> holdings) {
+        Map<String, List<Splits>> map = new HashMap<>();
+        for (Holdings h : holdings) {
+            if (h.getAssetType() != Assets.STOCK && h.getAssetType() != Assets.CRYPTO) continue;
+            MarketData md = marketDataService.getMarketDataByTicker(h.getTicker());
+            if (md != null && md.getSplits() != null && !md.getSplits().isEmpty()) {
+                map.put(h.getTicker(), md.getSplits());
+            }
+        }
+        return map;
     }
 
     private BigDecimal priceOnOrBefore(Map<LocalDate, BigDecimal> priceMap, LocalDate date) {
@@ -351,12 +408,16 @@ public class PortfolioPerformanceServiceImpl {
         // FX: per-ticker rateVsEur (price is in the asset's native currency) + display currency.
         // Stock/crypto prices are in MarketData currency (e.g. GBp pence); custom in holding currency.
         Map<String, BigDecimal> tickerNativeRate = new HashMap<>();
+        Map<String, List<Splits>> splitsByTicker = new HashMap<>();
         Set<String> displayCurrencies = new HashSet<>();
         for (Holdings h : holdings) {
             String ccy;
             if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) {
                 MarketData md = marketDataService.getMarketDataByTicker(h.getTicker());
                 ccy = (md != null && md.getCurrency() != null) ? md.getCurrency() : h.getCurrency();
+                if (md != null && md.getSplits() != null && !md.getSplits().isEmpty()) {
+                    splitsByTicker.put(h.getTicker(), md.getSplits());
+                }
             } else {
                 ccy = h.getCurrency();
             }
@@ -380,7 +441,8 @@ public class PortfolioPerformanceServiceImpl {
             BigDecimal portfolioValue = ZERO;
             for (Holdings h : holdings) {
                 String ticker = h.getTicker();
-                BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), date);
+                BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), date,
+                        splitsByTicker.get(ticker));
                 if (qty.compareTo(ZERO) <= 0) continue;
 
                 Map<LocalDate, BigDecimal> priceMap = (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO)
