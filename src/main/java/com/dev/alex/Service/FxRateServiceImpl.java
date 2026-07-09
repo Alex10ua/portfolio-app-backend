@@ -36,4 +36,15 @@ public class FxRateServiceImpl implements FxRateService {
                 .map(FxRate::getRateVsEur)
                 .orElse(BigDecimal.ONE);
     }
+
+    @Override
+    public BigDecimal getRateForCurrency(String currency, Map<String, BigDecimal> rates) {
+        if (currency == null || rates == null) return BigDecimal.ONE;
+        // GBp (pence) = GBP / 100; multiply rate by 100 so frontend division works correctly
+        if ("GBp".equals(currency) || "GBx".equals(currency)) {
+            BigDecimal gbp = rates.get("GBP");
+            return gbp != null ? gbp.multiply(BigDecimal.valueOf(100)) : BigDecimal.valueOf(100);
+        }
+        return rates.getOrDefault(currency, BigDecimal.ONE);
+    }
 }

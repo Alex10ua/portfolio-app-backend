@@ -18,11 +18,6 @@ public class TransactionServiceImpl implements TransactionService {
     private TransactionsRepository transactionsRepository;
 
     @Override
-    public void createTransactions(List<Transactions> transactions) {
-
-    }
-
-    @Override
     public List<Transactions> findAllByPortfolioId(String portfolioId) {
         return transactionsRepository.findAllByPortfolioId(portfolioId);
     }
@@ -70,11 +65,5 @@ public class TransactionServiceImpl implements TransactionService {
 
         // Save the updated transaction back to the database
         transactionsRepository.save(existingTransaction);
-    }
-
-    @Override
-    public void deleteTransaction(String transactionId, String portfolioId) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'deleteTransaction'");
     }
 }

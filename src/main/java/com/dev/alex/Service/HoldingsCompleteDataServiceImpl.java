@@ -17,6 +17,7 @@ import java.math.MathContext;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @Transactional
@@ -24,7 +25,6 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
         private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
         private static final BigDecimal ZERO = BigDecimal.valueOf(0);
         private static final MathContext MATH_CONTEXT = new MathContext(10, RoundingMode.HALF_EVEN);
-        private static final MathContext PRECISION_2_HALF_EVEN = new MathContext(3, RoundingMode.HALF_EVEN);
         @Autowired
         private HoldingsRepository holdingsRepository;
         @Autowired
@@ -39,13 +39,21 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
 
                 List<HoldingsCompleteData> holdingsCompleteDataList = new ArrayList<>();
                 List<Holdings> allHolding = holdingService.getAllHoldingsByPortfolioId(portfolioId);
+
+                // Pre-fetch market data and FX rates once for the whole portfolio to avoid
+                // ~2N per-row DB round trips (one marketData + one FX lookup per holding).
+                List<String> tickers = allHolding.stream()
+                                .map(h -> h.getTicker() == null ? null : h.getTicker().toUpperCase())
+                                .filter(java.util.Objects::nonNull).distinct().toList();
+                Map<String, MarketData> marketDataByTicker = marketDataService.getMarketDataForHoldingsPage(tickers);
+                Map<String, BigDecimal> fxRates = fxRateService.getAllRatesAsMap();
+
                 for (Holdings holding : allHolding) {
                         HoldingsCompleteData holdingsCompleteData = new HoldingsCompleteData();
                         if (holding.getAssetType() == Assets.STOCK) {
 
-                                MarketData marketData = marketDataService
-                                                .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
-                                
+                                MarketData marketData = marketDataByTicker.get(holding.getTicker().toUpperCase());
+
                                 BigDecimal divisionResult;
                                 BigDecimal dividedYieldPercentage;
                                 holdingsCompleteData.setTicker(holding.getTicker().toUpperCase());
@@ -117,7 +125,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 }
                                 holdingsCompleteData.setDailyChange(dailyChange);
                                 holdingsCompleteData.setCurrency(holding.getCurrency());
-                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency()));
+                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency(), fxRates));
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         } else {
                                 holdingsCompleteData.setTicker(holding.getTicker());
@@ -130,8 +138,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                 .multiply(holding.getQuantity());
                                 holdingsCompleteData
                                                 .setCostBasis(costBasicTotalShare.setScale(2, RoundingMode.HALF_EVEN));
-                                MarketData marketData = marketDataService
-                                                .getMarketDataForHoldingsPage(holding.getTicker().toUpperCase());
+                                MarketData marketData = marketDataByTicker.get(holding.getTicker().toUpperCase());
 
                                 if (marketData == null || marketData.getPrice() == null) {
                                     holdingsCompleteData.setCurrentTotalValue(BigDecimal.ZERO);
@@ -160,7 +167,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                                         RoundingMode.HALF_EVEN));
                                 }
                                 holdingsCompleteData.setCurrency(holding.getCurrency());
-                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency()));
+                                holdingsCompleteData.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency(), fxRates));
                                 holdingsCompleteDataList.add(holdingsCompleteData);
                         }
                 }

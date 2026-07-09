@@ -32,6 +32,17 @@ public class MarketDataServiceImpl implements MarketDataService {
         return marketDataRepository.findByTickerForHoldingsPage(ticker);
     }
 
+    @Description("batch fetch holdings-page market data for many tickers, keyed by ticker")
+    @Override
+    public java.util.Map<String, MarketData> getMarketDataForHoldingsPage(java.util.Collection<String> tickers) {
+        java.util.Map<String, MarketData> byTicker = new java.util.HashMap<>();
+        if (tickers == null || tickers.isEmpty()) return byTicker;
+        for (MarketData md : marketDataRepository.findByTickerInForHoldingsPage(tickers)) {
+            if (md.getTicker() != null) byTicker.put(md.getTicker(), md);
+        }
+        return byTicker;
+    }
+
     @Override
     public void saveMarketData(MarketData marketData) {
         marketDataRepository.save(marketData);

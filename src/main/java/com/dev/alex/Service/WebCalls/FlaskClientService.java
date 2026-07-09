@@ -7,6 +7,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.Duration;
+
 @Service
 public class FlaskClientService {
 
@@ -24,7 +26,7 @@ public class FlaskClientService {
                 .bodyValue(new Tickers(ticker))
                 .retrieve()
                 .toEntity(String.class)
-                .block();
+                .block(Duration.ofSeconds(35)); // hard ceiling; connect/response timeouts set on the WebClient
     }
 
     /** Tells Flask to fetch price history for the ticker and store it in MongoDB. */
