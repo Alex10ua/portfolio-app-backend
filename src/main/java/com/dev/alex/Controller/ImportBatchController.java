@@ -135,15 +135,20 @@ public class ImportBatchController {
 
         List<Transactions> batchTransactions = transactionsRepository.findAllByImportBatchId(batchId);
 
-        Set<String> affectedStockTickers = batchTransactions.stream()
-                .filter(t -> t.getAssetType() != null && t.getAssetType().equals(Assets.STOCK))
-                .map(Transactions::getTicker)
-                .collect(Collectors.toSet());
+        // Every asset type with a ticker needs holding cleanup — CUSTOM (NN/VUB imports)
+        // and CRYPTO batches used to be skipped and left stale holdings behind
+        Map<String, Assets> affectedTickers = new LinkedHashMap<>();
+        for (Transactions t : batchTransactions) {
+            if (t.getAssetType() != null && t.getTicker() != null) {
+                affectedTickers.putIfAbsent(t.getTicker(), t.getAssetType());
+            }
+        }
 
         transactionsRepository.deleteAllByImportBatchId(batchId);
         importBatchRepository.deleteById(batchId);
 
-        for (String ticker : affectedStockTickers) {
+        for (Map.Entry<String, Assets> entry : affectedTickers.entrySet()) {
+            String ticker = entry.getKey();
             try {
                 List<Transactions> remaining = transactionsRepository.findAllByPortfolioIdAndTicker(portfolioId, ticker);
                 if (remaining.isEmpty()) {
@@ -151,8 +156,10 @@ public class ImportBatchController {
                     if (holding != null) {
                         holdingsRepository.delete(holding);
                     }
-                } else {
+                } else if (Assets.STOCK.equals(entry.getValue()) || Assets.CRYPTO.equals(entry.getValue())) {
                     holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);
+                } else {
+                    holdingService.recalculateOrCreateCustomHoldingFromTicker(portfolioId, ticker, entry.getValue());
                 }
             } catch (Exception e) {
                 log.warn("Error cleaning up holding for ticker {} after batch delete", ticker, e);

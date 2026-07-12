@@ -161,6 +161,37 @@ public class TransactionController {
             throw new AccessDeniedException("Transaction does not belong to this portfolio");
         }
         transactionsRepository.deleteById(transactionId);
+
+        // BUY/SELL removal changes share math — bring the holding back in line
+        boolean isHoldingChange = transaction.getTransactionType() != null &&
+                (transaction.getTransactionType().equals(TransactionType.BUY) ||
+                 transaction.getTransactionType().equals(TransactionType.SELL));
+        if (isHoldingChange && transaction.getTicker() != null) {
+            recalculateHoldingAfterDelete(portfolioId, transaction);
+        }
         return ResponseEntity.ok(Map.of("deleted", Boolean.TRUE));
+    }
+
+    private void recalculateHoldingAfterDelete(String portfolioId, Transactions deleted) {
+        String ticker = deleted.getTicker().toUpperCase();
+        try {
+            List<Transactions> remaining = transactionsRepository.findAllByPortfolioIdAndTicker(portfolioId, ticker);
+            boolean anyHoldingChangeLeft = remaining != null && remaining.stream()
+                    .anyMatch(t -> t.getTransactionType() == TransactionType.BUY
+                            || t.getTransactionType() == TransactionType.SELL);
+            if (!anyHoldingChangeLeft) {
+                var holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
+                if (holding != null) {
+                    holdingsRepository.delete(holding);
+                }
+            } else if (Assets.STOCK.equals(deleted.getAssetType()) || Assets.CRYPTO.equals(deleted.getAssetType())) {
+                holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);
+            } else {
+                // CUSTOM and legacy COIN/FIGURINE/FUND go through the custom recalc
+                holdingService.recalculateOrCreateCustomHoldingFromTicker(portfolioId, ticker, deleted.getAssetType());
+            }
+        } catch (Exception e) {
+            log.warn("Error recalculating holding for ticker {} after transaction delete", ticker, e);
+        }
     }
 }
