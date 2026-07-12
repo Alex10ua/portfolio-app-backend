@@ -3,6 +3,7 @@ package com.dev.alex.Service.Interface;
 import com.dev.alex.Model.CustomAsset;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,4 +15,5 @@ public interface CustomAssetService {
     CustomAsset update(String portfolioId, String ticker, CustomAsset updatedAsset);
     void delete(String portfolioId, String ticker);
     CustomAsset updatePrice(String portfolioId, String ticker, BigDecimal newPrice);
+    CustomAsset updatePrice(String portfolioId, String ticker, BigDecimal newPrice, LocalDate date);
 }

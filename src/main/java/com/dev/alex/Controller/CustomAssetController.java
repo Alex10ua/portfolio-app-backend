@@ -11,6 +11,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -69,18 +70,21 @@ public class CustomAssetController {
         return ResponseEntity.ok(Map.of("deleted", true));
     }
 
-    @Operation(summary = "Update current price of a custom asset (appends to priceHistory)")
+    @Operation(summary = "Record price of a custom asset at a date (default today; past date only merges into priceHistory)")
     @PutMapping("/{portfolioId}/custom-assets/{ticker}/price")
     public ResponseEntity<?> updatePrice(@PathVariable String portfolioId,
                                          @PathVariable String ticker,
-                                         @RequestBody Map<String, BigDecimal> body,
+                                         @RequestBody Map<String, Object> body,
                                          Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
-        BigDecimal newPrice = body.get("price");
-        if (newPrice == null) {
+        if (body.get("price") == null) {
             return ResponseEntity.badRequest().body("Field 'price' is required");
         }
-        return ResponseEntity.ok(customAssetService.updatePrice(portfolioId, ticker, newPrice));
+        BigDecimal newPrice = new BigDecimal(String.valueOf(body.get("price")));
+        LocalDate date = body.get("date") == null || String.valueOf(body.get("date")).isBlank()
+                ? null
+                : LocalDate.parse(String.valueOf(body.get("date")));
+        return ResponseEntity.ok(customAssetService.updatePrice(portfolioId, ticker, newPrice, date));
     }
 
     @Operation(summary = "Bulk-merge price history entries (dedup by date, updates priceNow to latest entry)")

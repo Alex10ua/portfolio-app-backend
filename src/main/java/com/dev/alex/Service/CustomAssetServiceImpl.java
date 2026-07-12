@@ -93,23 +93,54 @@ public class CustomAssetServiceImpl implements CustomAssetService {
 
     @Override
     public CustomAsset updatePrice(String portfolioId, String ticker, BigDecimal newPrice) {
+        return updatePrice(portfolioId, ticker, newPrice, null);
+    }
+
+    /**
+     * Records the price at the given date (null = today). A past date only merges
+     * into priceHistory (overwriting a same-date entry); a date on/after the last
+     * price change also updates priceNow and syncs MarketData.
+     */
+    @Override
+    public CustomAsset updatePrice(String portfolioId, String ticker, BigDecimal newPrice, LocalDate date) {
         CustomAsset asset = findByPortfolioIdAndTicker(portfolioId, ticker);
-
-        // Append old price to history before overwriting
-        if (asset.getPriceNow() != null) {
-            asset.getPriceHistory().add(new PriceHistoryEntry(LocalDate.now(), asset.getPriceNow()));
+        LocalDate effectiveDate = (date != null) ? date : LocalDate.now();
+        if (effectiveDate.isAfter(LocalDate.now())) {
+            throw new IllegalArgumentException("Price date cannot be in the future");
         }
-        asset.setPriceNow(newPrice);
-        asset.setUpdatedAt(LocalDate.now());
 
-        // Keep MarketData in sync so HoldingsCompleteData picks up the new price
-        MarketData marketData = marketDataRepository.findByTicker(ticker.toUpperCase());
-        if (marketData != null) {
-            marketData.setPriceYesterday(marketData.getPrice());
-            marketData.setPrice(newPrice);
-            marketData.setUpdatedAt(LocalDate.now());
-            marketDataRepository.save(marketData);
+        // Merge into history by date — same-date update overwrites instead of duplicating
+        Map<LocalDate, BigDecimal> historyMap = new TreeMap<>();
+        for (PriceHistoryEntry e : asset.getPriceHistory()) {
+            if (e.getDate() != null && e.getPrice() != null) historyMap.put(e.getDate(), e.getPrice());
         }
+
+        // priceNow's own date is the asset's updatedAt; entry on/after it is the new current price
+        boolean isCurrent = asset.getUpdatedAt() == null || !effectiveDate.isBefore(asset.getUpdatedAt());
+
+        if (isCurrent) {
+            // Preserve the old current price in history under its own change date
+            if (asset.getPriceNow() != null && asset.getUpdatedAt() != null
+                    && !asset.getUpdatedAt().equals(effectiveDate)) {
+                historyMap.putIfAbsent(asset.getUpdatedAt(), asset.getPriceNow());
+            }
+            asset.setPriceNow(newPrice);
+            asset.setUpdatedAt(effectiveDate);
+
+            // Keep MarketData in sync so HoldingsCompleteData picks up the new price
+            MarketData marketData = marketDataRepository.findByTicker(ticker.toUpperCase());
+            if (marketData != null) {
+                marketData.setPriceYesterday(marketData.getPrice());
+                marketData.setPrice(newPrice);
+                marketData.setUpdatedAt(effectiveDate);
+                marketDataRepository.save(marketData);
+            }
+        }
+        historyMap.put(effectiveDate, newPrice);
+
+        asset.setPriceHistory(historyMap.entrySet().stream()
+                .map(e -> new PriceHistoryEntry(e.getKey(), e.getValue()))
+                .collect(Collectors.toList()));
 
         return customAssetRepository.save(asset);
     }
