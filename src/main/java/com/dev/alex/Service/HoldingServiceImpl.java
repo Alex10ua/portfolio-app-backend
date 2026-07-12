@@ -70,11 +70,15 @@ public class HoldingServiceImpl implements HoldingsService {
             portfolio.setUpdatedAt(new java.util.Date()); // Optionally update the updatedAt field
             portfolioRepository.save(portfolio);
         }
-        if (marketDataCheck == null) {
+        // null price also triggers a fetch: a stub doc (e.g. created by the custom
+        // holding path or a failed provider run) must not block retries forever
+        if (marketDataCheck == null || marketDataCheck.getPrice() == null) {
             //async call to flask server to get market data
             try{
                 tickersService.createTicker(newTransaction.getTicker().toUpperCase());
-                ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(newTransaction.getTicker().toUpperCase());
+                ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(
+                        newTransaction.getTicker().toUpperCase(),
+                        newTransaction.getAssetType() != null ? newTransaction.getAssetType().name() : null);
 
                 if (response != null) {
                     log.info("Status Code: " + response.getStatusCode());
@@ -145,10 +149,11 @@ public class HoldingServiceImpl implements HoldingsService {
         }
 
         MarketData marketData = marketDataRepository.findByTicker(upperTicker);
-        if (marketData == null) {
+        if (marketData == null || marketData.getPrice() == null) {
             try {
                 tickersService.createTicker(upperTicker);
-                ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(upperTicker);
+                ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(
+                        upperTicker, assetType != null ? assetType.name() : null);
                 if (response != null) {
                     log.info("Market data fetched for {}: {}", upperTicker, response.getStatusCode());
                 } else {

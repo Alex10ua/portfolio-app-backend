@@ -76,10 +76,13 @@ public class TransactionController {
                      transaction.getTransactionType().equals(TransactionType.SELL));
             if (isCash) {
                 // Cash deposits and withdrawals do not affect asset holdings
-            } else if (isHoldingChange && transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.STOCK)) {
+            } else if (isHoldingChange && transaction.getAssetType() != null
+                    && (transaction.getAssetType().equals(Assets.STOCK) || transaction.getAssetType().equals(Assets.CRYPTO))) {
+                // CRYPTO goes through the same market-data flow as STOCK; assetType
+                // tells Flask to use CoinGecko even before the holding exists
                 holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
                 tickersService.saveIfNotExists(transaction.getTicker());
-                flaskClientService.sendSyncPostRequest(transaction.getTicker());
+                flaskClientService.sendSyncPostRequest(transaction.getTicker(), transaction.getAssetType().name());
             } else if (transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.CUSTOM)) {
                 // Populate name and priceNow from the custom asset definition
                 CustomAsset customAsset = customAssetService.findByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());

@@ -1,6 +1,5 @@
 package com.dev.alex.Service.WebCalls;
 
-import com.dev.alex.Model.Tickers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -8,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 public class FlaskClientService {
@@ -20,10 +21,23 @@ public class FlaskClientService {
     }
 
     public ResponseEntity<String> sendSyncPostRequest(String ticker) {
+        return sendSyncPostRequest(ticker, null);
+    }
+
+    /**
+     * assetType (e.g. "CRYPTO") lets Flask route to the right provider even when
+     * the holding doesn't exist yet — its holdings-based lookup only works after.
+     */
+    public ResponseEntity<String> sendSyncPostRequest(String ticker, String assetType) {
+        Map<String, String> body = new HashMap<>();
+        body.put("ticker", ticker);
+        if (assetType != null) {
+            body.put("assetType", assetType);
+        }
         return webClient.post()
                 .uri("/update/auto")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(new Tickers(ticker))
+                .bodyValue(body)
                 .retrieve()
                 .toEntity(String.class)
                 .block(Duration.ofSeconds(35)); // hard ceiling; connect/response timeouts set on the WebClient
