@@ -40,4 +40,24 @@ public class PortfolioController {
     public List<Portfolios> findAllPortfoliosByUserId(Authentication authentication) {
         return portfolioRepository.findAllByUsername(authentication.getName());
     }
+
+    @PutMapping("/{portfolioId}/updatePortfolio")
+    public Portfolios updatePortfolio(@PathVariable String portfolioId,
+                                      @RequestBody Map<String, String> body,
+                                      Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        String newName = body.get("portfolioName");
+        if (newName == null || newName.isBlank()) {
+            throw new IllegalArgumentException("Portfolio name is required");
+        }
+        // portfolioId stays immutable — it embeds the original name but is opaque
+        // everywhere and is the FK for all child collections
+        Portfolios portfolio = portfolioRepository.findByPortfolioId(portfolioId);
+        portfolio.setPortfolioName(newName.trim());
+        if (body.containsKey("description")) {
+            portfolio.setDescription(body.get("description"));
+        }
+        portfolio.setUpdatedAt(new java.util.Date());
+        return portfolioRepository.save(portfolio);
+    }
 }
