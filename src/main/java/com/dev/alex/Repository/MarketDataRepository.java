@@ -34,4 +34,6 @@ public interface MarketDataRepository extends MongoRepository<MarketData, String
     @Query(value = "{'ticker' : #{#ticker}}")
     MarketData getDividendsAfter(@Param("ticker") String ticker);
 
+    void deleteByTicker(String ticker);
+
 }

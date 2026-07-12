@@ -17,6 +17,7 @@ public interface HoldingsRepository extends MongoRepository<Holdings, String> {
    List<Holdings> findAllByPortfolioId(String portfolioId);
    @Query("{'portfolioId' : ?0, 'ticker' : ?1}")
    Holdings findByPortfolioIdAndTicker(String portfolioId, String ticker);
+   void deleteAllByPortfolioId(String portfolioId);
    @Query(value = "{ 'holdingId': ?0 }")
    @Update("{ '$set': { 'averagePurchasePrice': :#{#averagePurchasePrice}, 'quantity': :#{#quantity} }, '$currentDate': { 'updatedAt': true } }")
    void updateAveragePurchasePriceAndQuantity(@Param("holdingId") String holdingId,

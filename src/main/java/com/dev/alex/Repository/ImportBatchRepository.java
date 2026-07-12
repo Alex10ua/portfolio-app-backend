@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface ImportBatchRepository extends MongoRepository<ImportBatch, String> {
     List<ImportBatch> findAllByPortfolioIdOrderByUploadedAtDesc(String portfolioId);
+    void deleteAllByPortfolioId(String portfolioId);
 }

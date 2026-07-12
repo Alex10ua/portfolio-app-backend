@@ -12,4 +12,5 @@ public interface TickerTagsRepository extends MongoRepository<TickerTags, String
     Optional<TickerTags> findByUsernameAndPortfolioIdAndTicker(String username, String portfolioId, String ticker);
     List<TickerTags> findAllByUsernameAndPortfolioId(String username, String portfolioId);
     List<TickerTags> findAllByUsername(String username);
+    void deleteAllByPortfolioId(String portfolioId);
 }

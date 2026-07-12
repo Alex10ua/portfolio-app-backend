@@ -15,4 +15,8 @@ public interface CustomAssetRepository extends MongoRepository<CustomAsset, Stri
     Optional<CustomAsset> findByPortfolioIdAndTicker(String portfolioId, String ticker);
 
     boolean existsByPortfolioIdAndTicker(String portfolioId, String ticker);
+
+    boolean existsByTickerAndPortfolioIdNot(String ticker, String portfolioId);
+
+    void deleteAllByPortfolioId(String portfolioId);
 }

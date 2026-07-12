@@ -3,6 +3,7 @@ package com.dev.alex.Controller;
 import com.dev.alex.Model.Portfolios;
 import com.dev.alex.Repository.PortfolioRepository;
 import com.dev.alex.Service.PortfolioAccessService;
+import com.dev.alex.Service.PortfoliosServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -19,6 +20,8 @@ public class PortfolioController {
     private PortfolioRepository portfolioRepository;
     @Autowired
     private PortfolioAccessService portfolioAccessService;
+    @Autowired
+    private PortfoliosServiceImpl portfoliosService;
 
     @PostMapping("/createPortfolio")
     public Portfolios createPortfolio(@RequestBody Portfolios portfolio, Authentication authentication) {
@@ -59,5 +62,12 @@ public class PortfolioController {
         }
         portfolio.setUpdatedAt(new java.util.Date());
         return portfolioRepository.save(portfolio);
+    }
+
+    @DeleteMapping("/{portfolioId}/deletePortfolio")
+    public Map<String, Boolean> deletePortfolio(@PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        portfoliosService.deletePortfolioCascade(portfolioId);
+        return Map.of("deleted", Boolean.TRUE);
     }
 }

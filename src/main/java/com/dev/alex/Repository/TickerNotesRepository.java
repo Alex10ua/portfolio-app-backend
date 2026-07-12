@@ -9,4 +9,5 @@ import java.util.Optional;
 @Repository
 public interface TickerNotesRepository extends MongoRepository<TickerNotes, String> {
     Optional<TickerNotes> findByUsernameAndPortfolioIdAndTicker(String username, String portfolioId, String ticker);
+    void deleteAllByPortfolioId(String portfolioId);
 }

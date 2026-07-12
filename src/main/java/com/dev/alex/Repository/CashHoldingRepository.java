@@ -12,4 +12,5 @@ public interface CashHoldingRepository extends MongoRepository<CashHolding, Stri
     List<CashHolding> findAllByPortfolioId(String portfolioId);
     Optional<CashHolding> findByPortfolioIdAndCurrency(String portfolioId, String currency);
     void deleteByPortfolioIdAndCurrency(String portfolioId, String currency);
+    void deleteAllByPortfolioId(String portfolioId);
 }
