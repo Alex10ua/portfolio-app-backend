@@ -10,9 +10,11 @@ import com.dev.alex.Model.NonDbModel.PerformancePoint;
 import com.dev.alex.Model.NonDbModel.PriceHistoryEntry;
 import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.PriceHistoryCache;
+import com.dev.alex.Model.RealizedPnlCache;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.CustomAssetRepository;
 import com.dev.alex.Repository.PriceHistoryCacheRepository;
+import com.dev.alex.Repository.RealizedPnlCacheRepository;
 import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.Interface.FxRateService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -40,6 +43,8 @@ public class PortfolioPerformanceServiceImpl {
     private CustomAssetRepository customAssetRepository;
     @Autowired
     private FxRateService fxRateService;
+    @Autowired
+    private RealizedPnlCacheRepository realizedPnlCacheRepository;
 
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final int SCALE = 2;
@@ -126,8 +131,19 @@ public class PortfolioPerformanceServiceImpl {
     }
 
     private BigDecimal calcRealizedPnL(List<Transactions> txList, Map<String, List<Splits>> splitsByTicker) {
+        // sum of per-currency gains — regrouped but unrounded, so identical to the old single accumulator
+        return calcRealizedPnLByCurrency(txList, splitsByTicker).values().stream()
+                .reduce(ZERO, BigDecimal::add);
+    }
+
+    /**
+     * FIFO realized P&L grouped by the SELL transaction's currency (GBp/GBx normalized
+     * to GBP; null falls back to USD). Amounts stay in native currency — callers convert.
+     */
+    private Map<String, BigDecimal> calcRealizedPnLByCurrency(List<Transactions> txList,
+                                                              Map<String, List<Splits>> splitsByTicker) {
         Map<String, Deque<Lot>> buyLots = new HashMap<>();
-        BigDecimal realized = ZERO;
+        Map<String, BigDecimal> realizedByCurrency = new HashMap<>();
 
         for (Transactions tx : txList) {
             String key = tx.getTicker() != null ? tx.getTicker() : tx.getName();
@@ -159,14 +175,75 @@ public class PortfolioPerformanceServiceImpl {
                             .subtract(sellCommPerShare)
                             .subtract(lotCommAtSell)
                             .multiply(matched);
-                    realized = realized.add(gain);
+                    String currency = normalizeCurrency(tx.getCurrency() != null ? tx.getCurrency() : "USD");
+                    realizedByCurrency.merge(currency, gain, BigDecimal::add);
                     lot.qty = lot.qty.subtract(matched.divide(f, 8, RoundingMode.HALF_EVEN));
                     remaining = remaining.subtract(matched);
                     if (lot.qty.compareTo(ZERO) <= 0) lots.pollFirst();
                 }
             }
         }
-        return realized;
+        return realizedByCurrency;
+    }
+
+    /**
+     * Realized P&L for the dashboard, per currency. Read-through cached in the
+     * realizedPnlCache collection; transaction writes evict via
+     * {@link #evictRealizedPnLCache}. Splits are loaded from the transaction
+     * ticker set — not current holdings — so fully-sold positions (the whole
+     * point of realized P&L) still get split-adjusted correctly.
+     */
+    public Map<String, BigDecimal> getRealizedPnLByCurrency(String portfolioId) {
+        Optional<RealizedPnlCache> cached = realizedPnlCacheRepository.findById(portfolioId);
+        if (cached.isPresent() && cached.get().getRealizedByCurrency() != null) {
+            return cached.get().getRealizedByCurrency();
+        }
+        Map<String, BigDecimal> computed = computeRealizedPnLByCurrency(portfolioId);
+        try {
+            realizedPnlCacheRepository.save(new RealizedPnlCache(portfolioId, computed, LocalDateTime.now()));
+        } catch (Exception e) {
+            // cache write is best-effort — the computed value is still correct
+        }
+        return computed;
+    }
+
+    /** Drop the stored value; next read recomputes. Call on any transaction write. */
+    public void evictRealizedPnLCache(String portfolioId) {
+        try {
+            realizedPnlCacheRepository.deleteById(portfolioId);
+        } catch (Exception e) {
+            // eviction is best-effort; a stale doc is replaced on next full compute
+        }
+    }
+
+    private Map<String, BigDecimal> computeRealizedPnLByCurrency(String portfolioId) {
+        List<Transactions> allTx = transactionsRepository.findAllByPortfolioIdOrderByDateAsc(portfolioId);
+
+        Map<String, List<Splits>> splitsByTicker = new HashMap<>();
+        Set<String> marketTickers = new HashSet<>();
+        for (Transactions tx : allTx) {
+            // only market-listed assets have real splits; CUSTOM tickers can collide with
+            // exchange symbols in marketData (see CLAUDE.md custom-ticker guard)
+            if (tx.getTicker() != null
+                    && (tx.getAssetType() == Assets.STOCK || tx.getAssetType() == Assets.CRYPTO)) {
+                marketTickers.add(tx.getTicker());
+            }
+        }
+        for (String ticker : marketTickers) {
+            MarketData md = marketDataService.getMarketDataByTicker(ticker);
+            if (md != null && md.getSplits() != null && !md.getSplits().isEmpty()) {
+                splitsByTicker.put(ticker, md.getSplits());
+            }
+        }
+
+        Map<String, BigDecimal> result = new HashMap<>();
+        calcRealizedPnLByCurrency(allTx, splitsByTicker).forEach((currency, amount) -> {
+            BigDecimal scaled = amount.setScale(SCALE, RoundingMode.HALF_EVEN);
+            if (scaled.compareTo(ZERO) != 0) {
+                result.put(currency, scaled);
+            }
+        });
+        return result;
     }
 
     private BigDecimal commissionPerShare(Transactions tx) {

@@ -10,6 +10,7 @@ import com.dev.alex.Repository.TransactionsRepository;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.ImportBatchProcessingService;
 import com.dev.alex.Service.PortfolioAccessService;
+import com.dev.alex.Service.PortfolioPerformanceServiceImpl;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -41,6 +42,8 @@ public class ImportBatchController {
     private ImportBatchProcessingService importBatchProcessingService;
     @Autowired
     private PortfolioAccessService portfolioAccessService;
+    @Autowired
+    private PortfolioPerformanceServiceImpl performanceService;
 
     @Data
     @AllArgsConstructor
@@ -84,6 +87,7 @@ public class ImportBatchController {
             }
 
             transactionsRepository.saveAll(transactions);
+            performanceService.evictRealizedPnLCache(portfolioId);
 
             ImportBatch batch = new ImportBatch();
             batch.setBatchId(batchId);
@@ -146,6 +150,7 @@ public class ImportBatchController {
 
         transactionsRepository.deleteAllByImportBatchId(batchId);
         importBatchRepository.deleteById(batchId);
+        performanceService.evictRealizedPnLCache(portfolioId);
 
         for (Map.Entry<String, Assets> entry : affectedTickers.entrySet()) {
             String ticker = entry.getKey();

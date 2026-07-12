@@ -10,6 +10,7 @@ import com.dev.alex.Service.CustomAssetServiceImpl;
 import com.dev.alex.Service.FxRateServiceImpl;
 import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.PortfolioAccessService;
+import com.dev.alex.Service.PortfolioPerformanceServiceImpl;
 import com.dev.alex.Service.TransactionServiceImpl;
 import com.dev.alex.Service.TickersServiceImpl;
 import com.dev.alex.Service.WebCalls.FlaskClientService;
@@ -50,6 +51,8 @@ public class TransactionController {
     private FxRateServiceImpl fxRateService;
     @Autowired
     private PortfolioAccessService portfolioAccessService;
+    @Autowired
+    private PortfolioPerformanceServiceImpl performanceService;
 
     @Operation(summary = "Create Transaction", description = "Create new transaction")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
@@ -67,6 +70,7 @@ public class TransactionController {
                 transaction.setTicker(transaction.getTicker().toUpperCase());
             }
             Transactions transactionStatus = transactionsRepository.save(transaction);
+            performanceService.evictRealizedPnLCache(portfolioId);
             boolean isCash = transaction.getTransactionType() != null &&
                     (transaction.getTransactionType().equals(TransactionType.DEPOSIT) ||
                      transaction.getTransactionType().equals(TransactionType.WITHDRAWAL));
@@ -127,6 +131,7 @@ public class TransactionController {
             @PathVariable String transactionId, @PathVariable String portfolioId, Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         transactionService.updateTransaction(updatedTransaction, transactionId, portfolioId);
+        performanceService.evictRealizedPnLCache(portfolioId);
         // recalculateHoldingFromTransactions works for all asset types:
         // for STOCK it applies split-adjusted calculation; for others splits list is empty (no-op)
         holdingService.recalculateHoldingFromTransactions(portfolioId, updatedTransaction.getTicker());
@@ -161,6 +166,7 @@ public class TransactionController {
             throw new AccessDeniedException("Transaction does not belong to this portfolio");
         }
         transactionsRepository.deleteById(transactionId);
+        performanceService.evictRealizedPnLCache(portfolioId);
 
         // BUY/SELL removal changes share math — bring the holding back in line
         boolean isHoldingChange = transaction.getTransactionType() != null &&
