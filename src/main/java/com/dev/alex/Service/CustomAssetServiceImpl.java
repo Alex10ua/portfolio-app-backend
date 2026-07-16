@@ -82,6 +82,16 @@ public class CustomAssetServiceImpl implements CustomAssetService {
         if (updatedAsset.getPriceUpdateMethod() != null) existing.setPriceUpdateMethod(updatedAsset.getPriceUpdateMethod());
         if (updatedAsset.getCustomFields() != null) existing.setCustomFields(updatedAsset.getCustomFields());
         existing.setUpdatedAt(LocalDate.now());
+
+        // Holdings table reads name/currency from marketData — keep the stub in sync
+        if (updatedAsset.getName() != null || updatedAsset.getCurrency() != null) {
+            MarketData marketData = marketDataRepository.findByTicker(existing.getTicker().toUpperCase());
+            if (marketData != null) {
+                if (updatedAsset.getName() != null) marketData.setName(updatedAsset.getName());
+                if (updatedAsset.getCurrency() != null) marketData.setCurrency(updatedAsset.getCurrency());
+                marketDataRepository.save(marketData);
+            }
+        }
         return customAssetRepository.save(existing);
     }
 
