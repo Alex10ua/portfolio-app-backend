@@ -55,4 +55,20 @@ public class FlaskClientService {
             // non-fatal — the caller will read whatever is already in MongoDB
         }
     }
+
+    /**
+     * Tells Flask to (re)fetch SEC EDGAR fundamentals for the ticker into MongoDB.
+     * Synchronous — the caller reads the freshly-written doc right after this returns.
+     */
+    public ResponseEntity<String> refreshFundamentals(String ticker) {
+        Map<String, String> body = new HashMap<>();
+        body.put("ticker", ticker);
+        return webClient.post()
+                .uri("/update/fundamentals")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve()
+                .toEntity(String.class)
+                .block(Duration.ofSeconds(35));
+    }
 }
