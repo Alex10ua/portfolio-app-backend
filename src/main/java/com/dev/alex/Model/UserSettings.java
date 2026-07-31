@@ -31,6 +31,9 @@ public class UserSettings {
     @NoArgsConstructor
     public static class PortfolioSettings {
         private List<Map<String, Object>> tableConfig;
-        private String chartStartMonth; // 'YYYY-MM'
+        private String chartRange;      // "1M" | "3M" | "6M" | "YTD" | "1Y" | "ALL"
+        private String sortBy;          // holdings-table column key
+        private String sortOrder;       // "asc" | "desc"
+        private String assetFilter;     // "ALL" or an Assets enum name
     }
 }

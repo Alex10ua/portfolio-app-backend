@@ -61,10 +61,30 @@ public class FlaskClientService {
      * Synchronous — the caller reads the freshly-written doc right after this returns.
      */
     public ResponseEntity<String> refreshFundamentals(String ticker) {
+        return postTicker("/update/fundamentals", ticker);
+    }
+
+    /**
+     * Refresh only marketData.statistics (Yahoo key statistics) for the ticker.
+     * One .info request on the Flask side — no price-history download.
+     */
+    public ResponseEntity<String> refreshStatistics(String ticker) {
+        return postTicker("/update/statistics", ticker);
+    }
+
+    /**
+     * Backfill the ticker's sharesOutstandingHistory from SEC EDGAR filings.
+     * US-registered issuers only; others come back as {"status":"no_data"}.
+     */
+    public ResponseEntity<String> refreshSharesHistory(String ticker) {
+        return postTicker("/update/sharesOutstandingHistory", ticker);
+    }
+
+    private ResponseEntity<String> postTicker(String uri, String ticker) {
         Map<String, String> body = new HashMap<>();
         body.put("ticker", ticker);
         return webClient.post()
-                .uri("/update/fundamentals")
+                .uri(uri)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .retrieve()

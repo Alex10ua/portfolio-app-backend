@@ -6,6 +6,7 @@ import java.util.Date;
 import java.util.List;
 
 import com.dev.alex.Model.NonDbModel.Dividend;
+import com.dev.alex.Model.NonDbModel.MarketStatistics;
 import com.dev.alex.Model.NonDbModel.Splits;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -35,6 +36,7 @@ public class MarketData {
     private String sector;
     private String industry;
     private Long sharesOutstanding; // total shares outstanding from provider (Yahoo)
+    private MarketStatistics statistics; // Yahoo key statistics snapshot, null until a Yahoo update ran
     private LocalDate updatedAt;
 
     public MarketData(BigDecimal price, LocalDate updatedAt, String ticker) {
