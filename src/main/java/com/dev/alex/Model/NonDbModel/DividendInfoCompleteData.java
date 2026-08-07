@@ -13,10 +13,22 @@ import java.util.Map;
 @AllArgsConstructor
 public class DividendInfoCompleteData {
 
+    // Every amount below is in its own NATIVE currency — no FX is applied here.
+    // The client converts to the portfolio's base currency with the rates it holds.
+
+    /** [{ticker: amount}] in the ticker's native (MarketData) currency */
     List<Map<String, BigDecimal>> tickerAmount;
-    // where string ticker bigdecimal amount
+    /** ticker → the currency its dividends are quoted in (e.g. "GBp") */
+    Map<String, String> tickerCurrency;
+    /** month → native amounts summed across currencies; only exact for a mono-currency portfolio */
     Map<String, BigDecimal> amountByMonth;
+    /** currency → (month → amount in that currency) — the convertible breakdown */
+    Map<String, Map<String, BigDecimal>> amountByMonthByCurrency;
+    /** native projections summed across currencies; only exact for a mono-currency portfolio */
     BigDecimal yearlyCombineDividendsProjection;
+    /** currency → next-12-months projection in that currency */
+    Map<String, BigDecimal> projectionByCurrency;
     Map<String, BigDecimal> fxRates; // current FX rates (currency → rateVsEur) for frontend conversion
-    String displayCurrency; // currency all amounts are expressed in (USD if multi-currency, else the single currency)
+    /** single native currency when the payers all share one, else "USD" — a hint, not applied */
+    String displayCurrency;
 }

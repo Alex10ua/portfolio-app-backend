@@ -16,7 +16,6 @@ import com.dev.alex.Repository.CustomAssetRepository;
 import com.dev.alex.Repository.PriceHistoryCacheRepository;
 import com.dev.alex.Repository.RealizedPnlCacheRepository;
 import com.dev.alex.Repository.TransactionsRepository;
-import com.dev.alex.Service.Interface.FxRateService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -41,8 +40,6 @@ public class PortfolioPerformanceServiceImpl {
     private PriceHistoryCacheRepository priceHistoryCacheRepository;
     @Autowired
     private CustomAssetRepository customAssetRepository;
-    @Autowired
-    private FxRateService fxRateService;
     @Autowired
     private RealizedPnlCacheRepository realizedPnlCacheRepository;
 
@@ -339,10 +336,13 @@ public class PortfolioPerformanceServiceImpl {
                 .filter(t -> t.getTicker() != null)
                 .collect(Collectors.groupingBy(Transactions::getTicker));
 
+        // Values stay in each ticker's quote currency — the client converts.
+        Map<String, String> tickerCurrency = nativeCurrencyByTicker(holdings, null);
+
         List<PerformancePoint> points = new ArrayList<>();
         LocalDate current = startDate;
         while (!current.isAfter(endDate)) {
-            BigDecimal portfolioValue = ZERO;
+            Map<String, BigDecimal> byCurrency = new LinkedHashMap<>();
             for (Holdings h : holdings) {
                 String ticker = h.getTicker();
                 BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), current,
@@ -356,10 +356,12 @@ public class PortfolioPerformanceServiceImpl {
                     price = flatPrices.get(ticker);
                 }
                 if (price != null && price.compareTo(ZERO) > 0) {
-                    portfolioValue = portfolioValue.add(qty.multiply(price));
+                    byCurrency.merge(tickerCurrency.getOrDefault(ticker, "USD"), qty.multiply(price), BigDecimal::add);
                 }
             }
-            points.add(new PerformancePoint(current, portfolioValue.setScale(SCALE, RoundingMode.HALF_EVEN)));
+            byCurrency.replaceAll((c, v) -> v.setScale(SCALE, RoundingMode.HALF_EVEN));
+            BigDecimal nativeSum = byCurrency.values().stream().reduce(ZERO, BigDecimal::add);
+            points.add(new PerformancePoint(current, nativeSum.setScale(SCALE, RoundingMode.HALF_EVEN), byCurrency));
             current = current.plusDays(1);
         }
 
@@ -482,28 +484,11 @@ public class PortfolioPerformanceServiceImpl {
                 .min(LocalDate::compareTo)
                 .orElse(LocalDate.now());
 
-        // FX: per-ticker rateVsEur (price is in the asset's native currency) + display currency.
+        // Per-ticker native currency — prices are quoted in it and stay in it.
         // Stock/crypto prices are in MarketData currency (e.g. GBp pence); custom in holding currency.
-        Map<String, BigDecimal> tickerNativeRate = new HashMap<>();
+        // No FX is applied here: the client converts with the rates it holds.
         Map<String, List<Splits>> splitsByTicker = new HashMap<>();
-        Set<String> displayCurrencies = new HashSet<>();
-        for (Holdings h : holdings) {
-            String ccy;
-            if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) {
-                MarketData md = marketDataService.getMarketDataByTicker(h.getTicker());
-                ccy = (md != null && md.getCurrency() != null) ? md.getCurrency() : h.getCurrency();
-                if (md != null && md.getSplits() != null && !md.getSplits().isEmpty()) {
-                    splitsByTicker.put(h.getTicker(), md.getSplits());
-                }
-            } else {
-                ccy = h.getCurrency();
-            }
-            tickerNativeRate.put(h.getTicker(), safeRate(fxRateService.getRateForCurrency(ccy)));
-            displayCurrencies.add(normalizeCurrency(ccy));
-        }
-        // Multi-currency portfolio → USD; mono-currency → that currency.
-        String displayCurrency = displayCurrencies.size() == 1 ? displayCurrencies.iterator().next() : "USD";
-        BigDecimal targetRate = safeRate(fxRateService.getRateForCurrency(displayCurrency));
+        Map<String, String> tickerCurrency = nativeCurrencyByTicker(holdings, splitsByTicker);
 
         YearMonth startMonth = YearMonth.from(firstTxDate);
         YearMonth endMonth = YearMonth.now();
@@ -515,7 +500,7 @@ public class PortfolioPerformanceServiceImpl {
                     ? LocalDate.now()
                     : current.atEndOfMonth();
 
-            BigDecimal portfolioValue = ZERO;
+            Map<String, BigDecimal> byCurrency = new LinkedHashMap<>();
             for (Holdings h : holdings) {
                 String ticker = h.getTicker();
                 BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), date,
@@ -528,17 +513,40 @@ public class PortfolioPerformanceServiceImpl {
 
                 BigDecimal price = priceOnOrBefore(priceMap, date);
                 if (price != null && price.compareTo(ZERO) > 0) {
-                    // native → display: value * targetRate / nativeRate
-                    BigDecimal nativeRate = tickerNativeRate.getOrDefault(ticker, BigDecimal.ONE);
-                    BigDecimal converted = qty.multiply(price).multiply(targetRate)
-                            .divide(nativeRate, SCALE + 4, RoundingMode.HALF_EVEN);
-                    portfolioValue = portfolioValue.add(converted);
+                    String ccy = tickerCurrency.getOrDefault(ticker, "USD");
+                    byCurrency.merge(ccy, qty.multiply(price), BigDecimal::add);
                 }
             }
-            result.add(new PerformancePoint(date, portfolioValue.setScale(SCALE, RoundingMode.HALF_EVEN)));
+            byCurrency.replaceAll((c, v) -> v.setScale(SCALE, RoundingMode.HALF_EVEN));
+            BigDecimal nativeSum = byCurrency.values().stream().reduce(ZERO, BigDecimal::add);
+            result.add(new PerformancePoint(date, nativeSum.setScale(SCALE, RoundingMode.HALF_EVEN), byCurrency));
             current = current.plusMonths(1);
         }
         return result;
+    }
+
+    /**
+     * Ticker → the currency its price is quoted in (MarketData currency for
+     * stock/crypto, holding currency otherwise). Fills {@code splitsSink} with
+     * each ticker's splits along the way so callers need only one MarketData read.
+     */
+    private Map<String, String> nativeCurrencyByTicker(List<Holdings> holdings,
+                                                       Map<String, List<Splits>> splitsSink) {
+        Map<String, String> currencies = new HashMap<>();
+        for (Holdings h : holdings) {
+            String ccy;
+            if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) {
+                MarketData md = marketDataService.getMarketDataByTicker(h.getTicker());
+                ccy = (md != null && md.getCurrency() != null) ? md.getCurrency() : h.getCurrency();
+                if (splitsSink != null && md != null && md.getSplits() != null && !md.getSplits().isEmpty()) {
+                    splitsSink.put(h.getTicker(), md.getSplits());
+                }
+            } else {
+                ccy = h.getCurrency();
+            }
+            currencies.put(h.getTicker(), ccy != null ? ccy : "USD");
+        }
+        return currencies;
     }
 
     /** GBp/GBx pence collapse to GBP for display-currency purposes. */
@@ -547,8 +555,4 @@ public class PortfolioPerformanceServiceImpl {
         return ("GBp".equals(currency) || "GBx".equals(currency)) ? "GBP" : currency;
     }
 
-    /** Falls back to 1 for null/zero rates so division stays safe. */
-    private BigDecimal safeRate(BigDecimal rate) {
-        return (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) ? BigDecimal.ONE : rate;
-    }
 }

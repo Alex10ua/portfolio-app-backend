@@ -35,5 +35,7 @@ public class UserSettings {
         private String sortBy;          // holdings-table column key
         private String sortOrder;       // "asc" | "desc"
         private String assetFilter;     // "ALL" or an Assets enum name
+        private String baseCurrency;    // ISO code every aggregated figure is shown in; null = auto-detect
+        private String currencyDisplay; // "Symbol" | "Code" | "Both" — how amounts are written
     }
 }

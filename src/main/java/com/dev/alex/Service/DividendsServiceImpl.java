@@ -114,15 +114,16 @@ public class DividendsServiceImpl implements DividendsService {
         Map<String, List<Transactions>> transactionsByTickerMap = new HashMap<>(); // Will store sorted transactions
         Map<String, List<Splits>> marketSplitsByTicker = new HashMap<>(); // Will store sorted splits
         List<String> tickersWithDividendData = new ArrayList<>(); // Tickers for which we found dividend market data
-        Map<String, BigDecimal> tickerDivisor = new HashMap<>(); // currency normalization (e.g. GBp pence → GBP)
 
         if (allPortfolioTransactions == null || allPortfolioTransactions.isEmpty()) {
             // No transactions, so no historical dividends. Initialize and return.
             dividendInfoCompleteData.setTickerAmount(receivedDividendsPerTickerList);
+            dividendInfoCompleteData.setTickerCurrency(new HashMap<>());
             dividendInfoCompleteData.setAmountByMonth(new HashMap<>());
+            dividendInfoCompleteData.setAmountByMonthByCurrency(new HashMap<>());
             dividendInfoCompleteData.setDisplayCurrency("USD");
-            calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId,
-                    fxRateService.getRateForCurrency("USD"));
+            calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
+            dividendInfoCompleteData.setFxRates(fxRateService.getAllRatesAsMap());
             return dividendInfoCompleteData;
         }
 
@@ -135,10 +136,10 @@ public class DividendsServiceImpl implements DividendsService {
         // 3. Process each unique ticker.
         // Dividend amounts come from MarketData, so the native currency is the
         // MarketData currency (e.g. "GBp" pence) — NOT the transaction currency
-        // (e.g. "GBP" pounds). Collect raw native amounts + per-ticker FX rate first;
-        // the display currency / conversion is applied afterwards.
+        // (e.g. "GBP" pounds). Amounts are reported in that native currency and
+        // never converted here; the client applies FX for the currency it displays.
         Map<String, BigDecimal> rawTickerAmount = new HashMap<>(); // native-currency totals
-        Map<String, BigDecimal> tickerNativeRate = new HashMap<>(); // rateVsEur of each ticker's native currency
+        Map<String, String> tickerNativeCurrency = new HashMap<>(); // ticker → native currency as quoted
         Set<String> marketCurrencies = new HashSet<>(); // normalized native currencies (GBp/GBx → GBP)
 
         for (String ticker : uniqueTickers) {
@@ -156,8 +157,8 @@ public class DividendsServiceImpl implements DividendsService {
                 transactionsByTickerMap.put(ticker, currentTickerTransactions);
                 marketDividendsByTicker.put(ticker, marketData.getDividends());
 
-                String nativeCurrency = marketData.getCurrency();
-                tickerNativeRate.put(ticker, safeRate(fxRateService.getRateForCurrency(nativeCurrency)));
+                String nativeCurrency = marketData.getCurrency() != null ? marketData.getCurrency() : "USD";
+                tickerNativeCurrency.put(ticker, nativeCurrency);
                 marketCurrencies.add(normalizeCurrency(nativeCurrency));
 
                 // Get splits, ensure non-null, AND SORT THEM BY DATE
@@ -174,47 +175,45 @@ public class DividendsServiceImpl implements DividendsService {
             }
         }
 
-        // Determine display currency: USD if dividend stocks span multiple
-        // currencies, otherwise the single currency they pay in.
+        // Hint only: the single currency the payers share, else USD. The client is
+        // free to display any currency — it holds the rates and does the maths.
         String displayCurrency = marketCurrencies.size() == 1
                 ? marketCurrencies.iterator().next()
                 : "USD";
         dividendInfoCompleteData.setDisplayCurrency(displayCurrency);
-        BigDecimal targetRate = safeRate(fxRateService.getRateForCurrency(displayCurrency)); // units of display ccy per 1 EUR
 
-        // Build per-ticker divisor (native → display): amount / (nativeRate / targetRate)
         for (String ticker : tickersWithDividendData) {
-            BigDecimal nativeRate = tickerNativeRate.getOrDefault(ticker, BigDecimal.ONE);
-            BigDecimal divisor = nativeRate.divide(targetRate, 10, java.math.RoundingMode.HALF_UP);
-            tickerDivisor.put(ticker, divisor);
-
-            BigDecimal amount = rawTickerAmount.getOrDefault(ticker, BigDecimal.ZERO);
-            if (divisor.compareTo(BigDecimal.ONE) != 0) {
-                amount = amount.divide(divisor, 10, java.math.RoundingMode.HALF_UP);
-            }
             Map<String, BigDecimal> receivedAmountMap = new HashMap<>();
-            receivedAmountMap.put(ticker, amount);
+            receivedAmountMap.put(ticker, rawTickerAmount.getOrDefault(ticker, BigDecimal.ZERO));
             receivedDividendsPerTickerList.add(receivedAmountMap);
         }
 
         // 4. Set results in DividendInfoCompleteData
         dividendInfoCompleteData.setTickerAmount(receivedDividendsPerTickerList);
+        dividendInfoCompleteData.setTickerCurrency(tickerNativeCurrency);
 
-        if (!tickersWithDividendData.isEmpty()) {
-            // Calculate dividends received per month using the collected historical data
-            // and DividendUtils
-            dividendInfoCompleteData.setAmountByMonth(dividendUtils.calculateDividendsPerMonthAuto(
+        // Monthly income, one series per native currency. Running the month
+        // calculation per currency group (divisor 1 = no scaling) keeps each
+        // series in its own units so the client can convert them independently.
+        Map<String, Map<String, BigDecimal>> amountByMonthByCurrency = new HashMap<>();
+        Map<String, BigDecimal> amountByMonth = new TreeMap<>();
+        Map<String, List<String>> tickersByCurrency = tickersWithDividendData.stream()
+                .collect(Collectors.groupingBy(t -> tickerNativeCurrency.getOrDefault(t, "USD")));
+        for (Map.Entry<String, List<String>> group : tickersByCurrency.entrySet()) {
+            Map<String, BigDecimal> months = dividendUtils.calculateDividendsPerMonthAuto(
                     transactionsByTickerMap,
                     marketDividendsByTicker,
                     marketSplitsByTicker,
-                    tickersWithDividendData,
-                    tickerDivisor));
-        } else {
-            dividendInfoCompleteData.setAmountByMonth(new HashMap<>());
+                    group.getValue(),
+                    Collections.emptyMap());
+            amountByMonthByCurrency.put(group.getKey(), months);
+            months.forEach((month, amount) -> amountByMonth.merge(month, amount, BigDecimal::add));
         }
+        dividendInfoCompleteData.setAmountByMonthByCurrency(amountByMonthByCurrency);
+        dividendInfoCompleteData.setAmountByMonth(amountByMonth);
 
         // 5. Calculate and set yearly dividend projection based on *current* holdings
-        calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId, targetRate);
+        calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
 
         dividendInfoCompleteData.setFxRates(fxRateService.getAllRatesAsMap());
         return dividendInfoCompleteData;
@@ -226,22 +225,19 @@ public class DividendsServiceImpl implements DividendsService {
         return ("GBp".equals(currency) || "GBx".equals(currency)) ? "GBP" : currency;
     }
 
-    /** Falls back to 1 for null/zero rates so division stays safe. */
-    private BigDecimal safeRate(BigDecimal rate) {
-        return (rate == null || rate.compareTo(BigDecimal.ZERO) == 0) ? BigDecimal.ONE : rate;
-    }
-
     /**
-     * Helper method to calculate and set the yearly dividend projection
-     * based on current holdings in the portfolio.
+     * Next-12-months dividend projection from *current* holdings, kept in each
+     * ticker's native (MarketData) currency — e.g. a GBp-quoted payer projects in
+     * pence. The flat total is the unconverted sum, exact only mono-currency.
      */
     private void calculateAndSetYearlyProjection(DividendInfoCompleteData dividendInfoCompleteData,
-            String portfolioId, BigDecimal targetRate) {
+            String portfolioId) {
         List<Holdings> currentHoldings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
-        BigDecimal yearlyProjection = BigDecimal.ZERO;
+        Map<String, BigDecimal> projectionByCurrency = new HashMap<>();
 
         if (currentHoldings == null) {
-            dividendInfoCompleteData.setYearlyCombineDividendsProjection(yearlyProjection);
+            dividendInfoCompleteData.setProjectionByCurrency(projectionByCurrency);
+            dividendInfoCompleteData.setYearlyCombineDividendsProjection(BigDecimal.ZERO);
             return;
         }
 
@@ -257,20 +253,14 @@ public class DividendsServiceImpl implements DividendsService {
 
                 if (md != null && md.getYearlyDividend() != null) {
                     BigDecimal projected = md.getYearlyDividend().multiply(holding.getQuantity());
-                    // yearlyDividend is in MarketData currency (e.g. GBp pence), not the holding's.
-                    // native → display currency: amount / (nativeRate / targetRate)
-                    BigDecimal nativeRate = safeRate(fxRateService.getRateForCurrency(md.getCurrency()));
-                    BigDecimal divisor = (targetRate == null || targetRate.compareTo(BigDecimal.ZERO) == 0)
-                            ? nativeRate
-                            : nativeRate.divide(targetRate, 10, java.math.RoundingMode.HALF_UP);
-                    if (divisor.compareTo(BigDecimal.ONE) != 0) {
-                        projected = projected.divide(divisor, 10, java.math.RoundingMode.HALF_UP);
-                    }
-                    yearlyProjection = yearlyProjection.add(projected);
+                    String ccy = md.getCurrency() != null ? md.getCurrency() : "USD";
+                    projectionByCurrency.merge(ccy, projected, BigDecimal::add);
                 }
             }
         }
-        dividendInfoCompleteData.setYearlyCombineDividendsProjection(yearlyProjection);
+        dividendInfoCompleteData.setProjectionByCurrency(projectionByCurrency);
+        dividendInfoCompleteData.setYearlyCombineDividendsProjection(
+                projectionByCurrency.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add));
     }
 
 }
