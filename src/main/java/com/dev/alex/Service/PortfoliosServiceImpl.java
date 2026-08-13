@@ -15,6 +15,7 @@ import com.dev.alex.Repository.RealizedPnlCacheRepository;
 import com.dev.alex.Repository.TickerNotesRepository;
 import com.dev.alex.Repository.TickerTagsRepository;
 import com.dev.alex.Repository.TransactionsRepository;
+import com.dev.alex.Repository.WatchlistRepository;
 import com.dev.alex.Service.Interface.PortfolioService;
 
 import java.util.List;
@@ -43,11 +44,13 @@ public class PortfoliosServiceImpl implements PortfolioService {
     private RealizedPnlCacheRepository realizedPnlCacheRepository;
     @Autowired
     private MarketDataRepository marketDataRepository;
+    @Autowired
+    private WatchlistRepository watchlistRepository;
 
     /**
      * Deletes the portfolio and every document keyed by its portfolioId:
      * transactions, holdings, custom assets, manual cash, import batches,
-     * tags, notes and the realized-P&L cache. Also removes marketData docs
+     * tags, notes, the watchlist and the realized-P&L cache. Also removes marketData docs
      * of this portfolio's custom tickers when no other portfolio defines the
      * same custom ticker (they hold user-set prices, not provider data).
      * Global collections (marketData of listed tickers, priceHistoryCache,
@@ -71,6 +74,7 @@ public class PortfoliosServiceImpl implements PortfolioService {
         importBatchRepository.deleteAllByPortfolioId(portfolioId);
         tickerTagsRepository.deleteAllByPortfolioId(portfolioId);
         tickerNotesRepository.deleteAllByPortfolioId(portfolioId);
+        watchlistRepository.deleteAllByPortfolioId(portfolioId);
         realizedPnlCacheRepository.deleteById(portfolioId);
         portfolioRepository.deleteById(portfolioId); // _id == portfolioId
     }

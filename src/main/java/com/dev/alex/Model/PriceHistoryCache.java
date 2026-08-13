@@ -17,7 +17,15 @@ import java.util.List;
 public class PriceHistoryCache {
     @Id
     private String ticker;
+    /** Daily closes, `date` = 'YYYY-MM-DD'. */
     private List<PriceHistoryEntry> history;
-    private List<PriceHistoryEntry> monthlyHistory;
+    /**
+     * Monthly closes. Deliberately NOT `PriceHistoryEntry`: the monthly `date` is a
+     * 'YYYY-MM' month key, which no LocalDate converter accepts — typing it as one
+     * made every full load of this document throw, which is exactly what happened
+     * to the portfolio-history chart once tickers started getting a monthly series.
+     * See {@link MonthlyPriceHistory} for the projection that reads only this list.
+     */
+    private List<MonthlyPriceHistory.MonthlyPricePoint> monthlyHistory;
     private LocalDate lastUpdated;
 }

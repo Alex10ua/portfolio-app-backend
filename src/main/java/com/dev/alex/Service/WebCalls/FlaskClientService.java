@@ -73,6 +73,15 @@ public class FlaskClientService {
     }
 
     /**
+     * Full update for one ticker: market data, dividends, splits, statistics and
+     * both price series in a single provider call. Used when a ticker is watched
+     * but not held, so nothing has ever fetched it.
+     */
+    public ResponseEntity<String> refreshFull(String ticker) {
+        return postTicker("/update/full", ticker);
+    }
+
+    /**
      * Backfill the ticker's sharesOutstandingHistory from SEC EDGAR filings.
      * US-registered issuers only; others come back as {"status":"no_data"}.
      */

@@ -315,7 +315,7 @@ public class PortfolioPerformanceServiceImpl {
         for (Holdings h : holdings) {
             if (h.getAssetType() != Assets.STOCK && h.getAssetType() != Assets.CRYPTO) continue;
             String ticker = h.getTicker();
-            PriceHistoryCache cache = priceHistoryCacheRepository.findById(ticker).orElse(null);
+            PriceHistoryCache cache = priceHistoryCacheRepository.findDailyById(ticker).orElse(null);
             if (cache != null && cache.getHistory() != null) {
                 Map<LocalDate, BigDecimal> priceMap = cache.getHistory().stream()
                         .collect(Collectors.toMap(PriceHistoryEntry::getDate, PriceHistoryEntry::getPrice,
@@ -451,7 +451,7 @@ public class PortfolioPerformanceServiceImpl {
         Map<String, Map<LocalDate, BigDecimal>> stockPrices = new HashMap<>();
         for (Holdings h : holdings) {
             if (h.getAssetType() != Assets.STOCK && h.getAssetType() != Assets.CRYPTO) continue;
-            PriceHistoryCache cache = priceHistoryCacheRepository.findById(h.getTicker()).orElse(null);
+            PriceHistoryCache cache = priceHistoryCacheRepository.findDailyById(h.getTicker()).orElse(null);
             if (cache != null && cache.getHistory() != null) {
                 Map<LocalDate, BigDecimal> priceMap = cache.getHistory().stream()
                         .collect(Collectors.toMap(PriceHistoryEntry::getDate, PriceHistoryEntry::getPrice, (a, b) -> b));

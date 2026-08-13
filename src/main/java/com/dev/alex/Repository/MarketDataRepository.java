@@ -34,6 +34,13 @@ public interface MarketDataRepository extends MongoRepository<MarketData, String
     @Query(value = "{'ticker' : #{#ticker}}")
     MarketData getDividendsAfter(@Param("ticker") String ticker);
 
+    List<MarketData> findAllByTickerIn(java.util.Collection<String> tickers);
+
+    /** Add-ticker search: case-insensitive substring over symbol and company name. */
+    @Query(value = "{'$or': [{'ticker': {'$regex': ?0, '$options': 'i'}}, {'name': {'$regex': ?0, '$options': 'i'}}]}",
+           fields = "{'ticker':1, 'name':1, 'sector':1, 'currency':1, 'price':1, 'yearlyDividend':1, 'statistics.dividendRate':1}")
+    List<MarketData> searchByTickerOrName(String regex, org.springframework.data.domain.Pageable pageable);
+
     void deleteByTicker(String ticker);
 
 }
