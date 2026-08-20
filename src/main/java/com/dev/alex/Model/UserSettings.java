@@ -31,11 +31,24 @@ public class UserSettings {
     @NoArgsConstructor
     public static class PortfolioSettings {
         private List<Map<String, Object>> tableConfig;
+        private List<AllocationTarget> targets; // desired % of portfolio per ticker
         private String chartRange;      // "1M" | "3M" | "6M" | "YTD" | "1Y" | "ALL"
         private String sortBy;          // holdings-table column key
         private String sortOrder;       // "asc" | "desc"
         private String assetFilter;     // "ALL" or an Assets enum name
         private String baseCurrency;    // ISO code every aggregated figure is shown in; null = auto-detect
         private String currencyDisplay; // "Symbol" | "Code" | "Both" — how amounts are written
+    }
+
+    /**
+     * Target weight of one ticker, in percent. A list rather than a ticker-keyed
+     * map because Spring Data rejects '.' in map keys (BRK.B, VOD.L).
+     */
+    @Data
+    @AllArgsConstructor
+    @NoArgsConstructor
+    public static class AllocationTarget {
+        private String ticker;
+        private Double percent;
     }
 }
