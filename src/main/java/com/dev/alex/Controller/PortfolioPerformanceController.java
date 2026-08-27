@@ -26,13 +26,16 @@ public class PortfolioPerformanceController {
     @GetMapping("/{portfolioId}/performance")
     public PerformanceData getPerformance(
             @PathVariable String portfolioId,
-            @RequestParam(defaultValue = "ALL") String period) {
+            @RequestParam(defaultValue = "ALL") String period,
+            Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         return performanceService.getPerformance(portfolioId, period);
     }
 
     @GetMapping("/{portfolioId}/portfolio-history")
     public ResponseEntity<List<PerformancePoint>> getPortfolioHistory(
-            @PathVariable String portfolioId) {
+            @PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         return ResponseEntity.ok(performanceService.getMonthlyHistory(portfolioId));
     }
 
