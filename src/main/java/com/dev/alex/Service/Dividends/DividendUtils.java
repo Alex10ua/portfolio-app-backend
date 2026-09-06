@@ -31,9 +31,9 @@ public class DividendUtils {
      * @param sortedSplits A list of splits for the stock, sorted chronologically by date.
      * @return The number of shares held on the targetDate.
      */
-    private BigDecimal getSharesHeldOnDate(LocalDate targetDate,
-                                           List<Transactions> sortedTransactions,
-                                           List<Splits> sortedSplits) {
+    public BigDecimal getSharesHeldOnDate(LocalDate targetDate,
+                                          List<Transactions> sortedTransactions,
+                                          List<Splits> sortedSplits) {
         BigDecimal sharesHeld = BigDecimal.ZERO;
 
         // Create a combined list of events (transactions and splits)

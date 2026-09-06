@@ -18,9 +18,17 @@ public class DividendsCalendarController {
     @Autowired
     private PortfolioAccessService portfolioAccessService;
 
+    /**
+     * Month name -> payments. Without {@code year} this stays the rolling
+     * projection older clients expect; with one it reports that calendar year
+     * (closed years as paid, the current year paid-to-date plus schedule).
+     */
     @GetMapping("/{portfolioId}/dividends-calendar")
-    public Map<String, List<DividendsCalendarData>> getDividendCalendarByPortfolioId(@PathVariable String portfolioId, Authentication authentication) {
+    public Map<String, List<DividendsCalendarData>> getDividendCalendarByPortfolioId(
+            @PathVariable String portfolioId,
+            @RequestParam(required = false) Integer year,
+            Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
-        return dividendCalendarService.getDividendCalendarByPortfolioId(portfolioId);
+        return dividendCalendarService.getDividendCalendarByPortfolioId(portfolioId, year);
     }
 }
