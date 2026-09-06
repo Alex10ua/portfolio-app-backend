@@ -38,6 +38,7 @@ public class UserSettings {
         private String assetFilter;     // "ALL" or an Assets enum name
         private String baseCurrency;    // ISO code every aggregated figure is shown in; null = auto-detect
         private String currencyDisplay; // "Symbol" | "Code" | "Both" — how amounts are written
+        private Boolean tagFilterCollapsed; // tag-chip cloud hidden on Watchlist / Self-Funding
     }
 
     /**
