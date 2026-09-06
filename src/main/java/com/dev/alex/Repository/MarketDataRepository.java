@@ -21,8 +21,12 @@ public interface MarketDataRepository extends MongoRepository<MarketData, String
     void updatePriceByTicker(@Param("ticker") String ticker,
                              @Param("price") BigDecimal price);
 
+    // `currency` is the quote currency of `price`, which is NOT the holding's
+    // transaction currency: a London listing quotes GBp (pence) against a GBP
+    // holding. A client that shows or reuses this price needs it to avoid being
+    // out by 100× — see HoldingDetailDialog's close-position prefill.
     @Query(value = "{'ticker': :#{#ticker}}",
-           fields = "{'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1, 'sharesOutstanding' : 1, 'name' : 1}")
+           fields = "{'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1, 'sharesOutstanding' : 1, 'name' : 1, 'currency' : 1, 'sector' : 1, 'country' : 1, 'industry' : 1}")
     MarketData findByTickerForHoldingsPage(@Param("ticker") String ticker);
 
     // Batch variant of findByTickerForHoldingsPage — one query for all a portfolio's
