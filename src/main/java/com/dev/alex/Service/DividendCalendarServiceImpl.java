@@ -42,62 +42,41 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                                 Collectors.reducing(BigDecimal.ZERO, Holdings::getQuantity,
                                                                 BigDecimal::add)));
 
+                LocalDate yearStart = Year.now().atDay(1);
+                LocalDate previousYearStart = yearStart.minusYears(1);
+
                 for (Map.Entry<String, BigDecimal> entry : tickerQuantity.entrySet()) {
                         String ticker = entry.getKey();
                         BigDecimal quantity = entry.getValue();
                         MarketData marketData = marketDataService.getMarketDataByTicker(ticker);
-                        if (marketData.getLastDividendPayment() != null && marketData.getDividends() != null) {
-                                List<Dividend> dividendList = marketData.getDividends().stream()
-                                                .distinct()
-                                                .toList();
-                                LocalDate dateYear = LocalDateTime
-                                                .ofInstant(
-                                                                Year.now().atDay(1).atStartOfDay(ZoneId.systemDefault())
-                                                                                .toInstant(),
-                                                                ZoneId.systemDefault())
-                                                .toLocalDate();
+                        if (marketData == null || marketData.getLastDividendPayment() == null
+                                        || marketData.getDividends() == null) {
+                                continue;
+                        }
+                        List<Dividend> dividendList = marketData.getDividends().stream()
+                                        .filter(d -> d != null && d.getDividendDate() != null
+                                                        && d.getDividendAmount() != null)
+                                        .distinct()
+                                        .toList();
 
-                                ZonedDateTime zdt = Year.now()
-                                                .minusYears(1)
-                                                .atDay(1)
-                                                .atStartOfDay(ZoneId.systemDefault());
-
-                                LocalDate oneYearAgoDate = zdt.toLocalDate();
-                                List<Dividend> lastYearDividends = dividendList.stream()
-                                                .filter(dividend -> dividend.getDividendDate().isBefore(dateYear)
-                                                                && dividend.getDividendDate().isAfter(oneYearAgoDate))
-                                                .toList();
-                                if (!lastYearDividends.isEmpty()) {
-                                        for (Dividend dividend : lastYearDividends) {
-                                                String monthName = dividend.getDividendDate().getMonth().toString();
-                                                DividendsCalendarData calendarEntry = new DividendsCalendarData(
-                                                                ticker, dividend.getDividendAmount(), quantity);
-                                                dividendByMonth.merge(
-                                                                monthName,
-                                                                new ArrayList<>(List.of(calendarEntry)),
-                                                                (existing, newList) -> {
-                                                                        existing.addAll(newList);
-                                                                        return existing;
-                                                                });
-                                        }
-                                } else {
-                                        List<Dividend> yearToDateDividends = dividendList.stream()
+                        List<Dividend> lastYearDividends = dividendList.stream()
+                                        .filter(dividend -> dividend.getDividendDate().isBefore(yearStart)
+                                                        && dividend.getDividendDate().isAfter(previousYearStart))
+                                        .toList();
+                        // A payer that only started distributing this year has no template
+                        // year to repeat, so fall back to what it has paid so far.
+                        List<Dividend> template = lastYearDividends.isEmpty()
+                                        ? dividendList.stream()
                                                         .filter(dividend -> dividend.getDividendDate()
-                                                                        .isAfter(dateYear))
-                                                        .toList();
-                                        for (Dividend dividend : yearToDateDividends) {
-                                                String monthName = dividend.getDividendDate().getMonth().toString();
-                                                DividendsCalendarData calendarEntry = new DividendsCalendarData(
-                                                                ticker, dividend.getDividendAmount(), quantity);
-                                                dividendByMonth.merge(
-                                                                monthName,
-                                                                new ArrayList<>(List.of(calendarEntry)),
-                                                                (existing, newList) -> {
-                                                                        existing.addAll(newList);
-                                                                        return existing;
-                                                                });
-                                        }
-                                }
+                                                                        .isAfter(yearStart))
+                                                        .toList()
+                                        : lastYearDividends;
+
+                        for (Dividend dividend : onePerMonth(template)) {
+                                String monthName = dividend.getDividendDate().getMonth().toString();
+                                dividendByMonth.computeIfAbsent(monthName, m -> new ArrayList<>())
+                                                .add(new DividendsCalendarData(
+                                                                ticker, dividend.getDividendAmount(), quantity));
                         }
                 }
                 return dividendByMonth.entrySet().stream()
@@ -222,6 +201,33 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                 .sorted(Map.Entry.comparingByKey())
                                 .forEach(e -> result.put(e.getKey().name(), e.getValue()));
                 return result;
+        }
+
+        /**
+         * At most one payment per calendar month, the most recent one winning.
+         *
+         * <p>
+         * A calendar year is the wrong ruler for a schedule whose ex-date drifts.
+         * Realty Income moved from the 1st of the month to the last business day of
+         * the month before during 2025, so both 2025-10-01 and 2025-10-31 fall in
+         * October and the template year holds 13 payments for a twelve-a-year payer.
+         * Projected straight forward that shows O twice in October and overstates
+         * the annual figure by one month's income. The projection answers "what will
+         * this month pay", so a month gets one payment and it is the latest, which
+         * carries the rate in force now.
+         *
+         * <p>
+         * This is a forward projection only. The per-year view keeps every declared
+         * payment, because a year that really paid thirteen times really did.
+         */
+        private static Collection<Dividend> onePerMonth(List<Dividend> dividends) {
+                Map<Month, Dividend> latest = new EnumMap<>(Month.class);
+                for (Dividend dividend : dividends) {
+                        latest.merge(dividend.getDividendDate().getMonth(), dividend,
+                                        (kept, candidate) -> candidate.getDividendDate()
+                                                        .isAfter(kept.getDividendDate()) ? candidate : kept);
+                }
+                return latest.values();
         }
 
         /**

@@ -62,6 +62,7 @@ public class AiReferenceController {
         endpoints.put("GET /api/v1/ai/portfolios", "Which portfolios exist and what currencies they use.");
         endpoints.put("GET /api/v1/ai/{portfolioId}/snapshot", "Whole portfolio: positions, cash, totals, realized P&L.");
         endpoints.put("GET /api/v1/ai/{portfolioId}/positions", "Positions only.");
+        endpoints.put("GET /api/v1/ai/{portfolioId}/allocation-targets", "Target weight per ticker vs actual weight, drift and the trade that closes it.");
         endpoints.put("GET /api/v1/ai/{portfolioId}/diversification", "Value by country, sector, industry, ticker.");
         endpoints.put("GET /api/v1/ai/{portfolioId}/tags", "Positions grouped by user tag.");
         endpoints.put("GET /api/v1/ai/{portfolioId}/transactions", "Filtered, paged transaction history.");
@@ -87,6 +88,7 @@ public class AiReferenceController {
                         AiEnvelopeService.NOTE_NULLS,
                         AiEnvelopeService.NOTE_STATISTICS_SCALING,
                         AiEnvelopeService.NOTE_UNCONVERTED_SCALARS,
+                        AiEnvelopeService.NOTE_ALLOCATION_TARGETS,
                         AiEnvelopeService.NOTE_SPARSE_SHARES,
                         "daysStale counts days since the price was last refreshed. Over "
                                 + AiEnvelopeService.STALE_DAYS + " days, say the figure may be out of date."),

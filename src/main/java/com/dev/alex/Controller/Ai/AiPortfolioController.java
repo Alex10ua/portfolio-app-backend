@@ -1,6 +1,7 @@
 package com.dev.alex.Controller.Ai;
 
 import com.dev.alex.Model.Enums.TransactionType;
+import com.dev.alex.Model.NonDbModel.Ai.AiAllocationTargets;
 import com.dev.alex.Model.NonDbModel.Ai.AiDiversification;
 import com.dev.alex.Model.NonDbModel.Ai.AiEnvelope;
 import com.dev.alex.Model.NonDbModel.Ai.AiPortfolioSummary;
@@ -78,6 +79,22 @@ public class AiPortfolioController {
         portfolioAccessService.assertOwnership(portfolioId, username);
         List<AiPosition> positions = assembler.positions(portfolioId, username);
         return envelopeService.wrap(positions, baseCurrency(username, portfolioId, positions));
+    }
+
+    @Operation(summary = "Allocation targets",
+            description = "The target weight the user set for each ticker against the weight it actually "
+                    + "carries, the drift between them and the trade that would close it. Percent and "
+                    + "drift are computed in the portfolio's base currency — a portfolio-wide weight has "
+                    + "no meaning until unlike currencies are expressed in one of them.")
+    @GetMapping("/{portfolioId}/allocation-targets")
+    public AiEnvelope<AiAllocationTargets> allocationTargets(@PathVariable String portfolioId,
+                                                             Authentication authentication) {
+        String username = authentication.getName();
+        portfolioAccessService.assertOwnership(portfolioId, username);
+        List<AiPosition> positions = assembler.positions(portfolioId, username);
+        String base = baseCurrency(username, portfolioId, positions);
+        return envelopeService.wrap(assembler.allocationTargets(portfolioId, username, positions, base),
+                base, AiEnvelopeService.NOTE_ALLOCATION_TARGETS);
     }
 
     @Operation(summary = "Portfolio breakdown",

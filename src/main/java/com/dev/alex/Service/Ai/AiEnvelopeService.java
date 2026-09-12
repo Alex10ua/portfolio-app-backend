@@ -64,6 +64,16 @@ public class AiEnvelopeService {
                     + "DIVIDEND and TAX cash flows are not yet included, so treat it as a deposit ledger "
                     + "rather than a true cash balance. manualCash is the user-entered figure.";
 
+    public static final String NOTE_ALLOCATION_TARGETS =
+            "Allocation targets are the one payload here that is converted: currentPercent, "
+                    + "driftPercentagePoints and every field suffixed InBaseCurrency were computed in "
+                    + "baseCurrency at the fxRates above, because a share of the whole portfolio does not "
+                    + "exist while unlike currencies sit unconverted. marketValue, deltaValue and price stay "
+                    + "native. The denominator is the market value of the positions only — no cash — which "
+                    + "is what the dashboard's '% of Portfolio' column shows. A target is the user's "
+                    + "intent, not a recommendation: deltaValue/deltaShares describe the trade that would "
+                    + "reach it, they do not endorse it.";
+
     /** Matches the frontend's staleness threshold on the holdings dashboard. */
     public static final int STALE_DAYS = 4;
 

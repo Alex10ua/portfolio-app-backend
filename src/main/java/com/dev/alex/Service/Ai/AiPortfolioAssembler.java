@@ -3,6 +3,7 @@ package com.dev.alex.Service.Ai;
 import com.dev.alex.Model.CashHolding;
 import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.MarketData;
+import com.dev.alex.Model.NonDbModel.Ai.AiAllocationTargets;
 import com.dev.alex.Model.NonDbModel.Ai.AiDiversification;
 import com.dev.alex.Model.NonDbModel.Ai.AiPortfolioSummary;
 import com.dev.alex.Model.NonDbModel.Ai.AiPosition;
@@ -34,13 +35,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * Turns the SPA-facing holding, cash and tag data into the enriched, per-currency
  * shape the AI endpoints answer in. Reads existing services only — no new
- * business logic, no FX.
+ * business logic, and no FX except in allocationTargets, where a portfolio-wide
+ * weight cannot exist without it.
  */
 @Service
 public class AiPortfolioAssembler {
@@ -143,6 +147,123 @@ public class AiPortfolioAssembler {
         }
         out.sort(Comparator.comparing(AiPosition::marketValue, Comparator.nullsLast(Comparator.reverseOrder())));
         return out;
+    }
+
+    // ------------------------------------------------------- allocation targets
+
+    /**
+     * Target weight per ticker against the weight it actually carries, plus the
+     * trade that would close the gap.
+     * <p>
+     * The one place this package converts currency. A weight is a share of the
+     * whole portfolio, which does not exist until unlike currencies are expressed
+     * in one of them — so percent, drift and the {@code ...InBaseCurrency} amounts
+     * are converted with the envelope's own rate table, exactly as the dashboard's
+     * "% of Portfolio" column does, and every other figure stays native. Cash is
+     * excluded from the denominator, matching that column.
+     */
+    public AiAllocationTargets allocationTargets(String portfolioId, String username,
+                                                 List<AiPosition> positions, String baseCurrency) {
+        Map<String, BigDecimal> rates = envelopeService.fxRates();
+
+        Map<String, Double> targets = new LinkedHashMap<>();
+        envelopeService.portfolioSettings(username, portfolioId)
+                .map(UserSettings.PortfolioSettings::getTargets)
+                .ifPresent(list -> list.forEach(t -> {
+                    if (t.getTicker() != null && t.getPercent() != null) targets.put(t.getTicker(), t.getPercent());
+                }));
+
+        Map<String, BigDecimal> valueInBase = new HashMap<>();
+        BigDecimal total = BigDecimal.ZERO;
+        for (AiPosition p : positions) {
+            BigDecimal converted = convert(p.marketValue(), p.currency(), baseCurrency, rates);
+            if (converted == null) continue;   // no rate for that currency — leave it out rather than mis-add it
+            valueInBase.put(p.ticker(), converted);
+            total = total.add(converted);
+        }
+
+        List<AiAllocationTargets.Row> rows = new ArrayList<>();
+        int withoutTarget = 0;
+        for (AiPosition p : positions) {
+            Double target = targets.get(p.ticker());
+            if (target == null) withoutTarget++;
+            BigDecimal inBase = valueInBase.get(p.ticker());
+            BigDecimal current = percentOf(inBase, total);
+            BigDecimal targetValue = target == null || total.signum() == 0 ? null
+                    : total.multiply(BigDecimal.valueOf(target)).divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_EVEN);
+            BigDecimal deltaBase = targetValue == null || inBase == null ? null : targetValue.subtract(inBase);
+            BigDecimal deltaNative = convert(deltaBase, baseCurrency, p.currency(), rates);
+            BigDecimal deltaShares = deltaNative == null || p.price() == null || p.price().signum() == 0 ? null
+                    : deltaNative.divide(p.price(), 4, RoundingMode.HALF_EVEN);
+
+            rows.add(new AiAllocationTargets.Row(
+                    p.ticker(), p.name(), p.assetType(), p.currency(), true,
+                    p.shares(), p.price(), p.marketValue(), inBase,
+                    target, current, drift(current, target),
+                    targetValue, deltaBase, deltaNative, deltaShares,
+                    status(current, target)));
+        }
+
+        // A target outlives the position it was set on — the user still means to
+        // hold that weight, so it belongs in the answer with a full-size buy.
+        Set<String> held = positions.stream().map(AiPosition::ticker).collect(Collectors.toSet());
+        for (Map.Entry<String, Double> e : targets.entrySet()) {
+            if (held.contains(e.getKey())) continue;
+            BigDecimal targetValue = total.signum() == 0 ? null
+                    : total.multiply(BigDecimal.valueOf(e.getValue())).divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_EVEN);
+            rows.add(new AiAllocationTargets.Row(
+                    e.getKey(), null, null, null, false,
+                    null, null, null, BigDecimal.ZERO,
+                    e.getValue(), BigDecimal.ZERO, drift(BigDecimal.ZERO, e.getValue()),
+                    targetValue, targetValue, null, null,
+                    status(BigDecimal.ZERO, e.getValue())));
+        }
+
+        // Targeted rows first, furthest from target first; untargeted by size.
+        rows.sort(Comparator
+                .comparing((AiAllocationTargets.Row r) -> r.targetPercent() == null)
+                .thenComparing(r -> r.driftPercentagePoints() == null
+                                ? BigDecimal.ZERO : r.driftPercentagePoints().abs(),
+                        Comparator.reverseOrder())
+                .thenComparing(AiAllocationTargets.Row::marketValueInBaseCurrency,
+                        Comparator.nullsLast(Comparator.reverseOrder())));
+
+        BigDecimal targeted = targets.values().stream()
+                .map(BigDecimal::valueOf)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        return new AiAllocationTargets(
+                portfolioId,
+                baseCurrency,
+                total,
+                targeted,
+                BigDecimal.valueOf(100).subtract(targeted),
+                targets.size(),
+                withoutTarget,
+                rows);
+    }
+
+    private static BigDecimal drift(BigDecimal currentPercent, Double targetPercent) {
+        if (currentPercent == null || targetPercent == null) return null;
+        return currentPercent.subtract(BigDecimal.valueOf(targetPercent));
+    }
+
+    /** Same +/-1pp tolerance the dashboard's TargetPercentCell tints with. */
+    private static String status(BigDecimal currentPercent, Double targetPercent) {
+        BigDecimal d = drift(currentPercent, targetPercent);
+        if (d == null) return "NO_TARGET";
+        if (d.abs().compareTo(BigDecimal.ONE) <= 0) return "ON_TARGET";
+        return d.signum() < 0 ? "UNDERWEIGHT" : "OVERWEIGHT";
+    }
+
+    /** amount_in_TARGET = amount * rate[TARGET] / rate[SOURCE] — the envelope's own formula. */
+    private static BigDecimal convert(BigDecimal amount, String from, String to, Map<String, BigDecimal> rates) {
+        if (amount == null || from == null || to == null) return null;
+        if (from.equals(to)) return amount;
+        BigDecimal fromRate = rates.get(from);
+        BigDecimal toRate = rates.get(to);
+        if (fromRate == null || toRate == null || fromRate.signum() == 0) return null;
+        return amount.multiply(toRate).divide(fromRate, 6, RoundingMode.HALF_EVEN);
     }
 
     // ---------------------------------------------------------------- snapshot
