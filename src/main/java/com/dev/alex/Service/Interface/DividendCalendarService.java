@@ -16,8 +16,10 @@ public interface DividendCalendarService {
      * declared that year, valued on the shares held on its ex-date. The current
      * year is a hybrid — declared payments on those ex-date share counts, plus
      * the months nothing is declared for yet scheduled from last year's pattern
-     * on today's holding. A {@code null} year falls back to the un-yeared rolling
-     * projection.
+     * on today's holding. A future year is projection only: every month with no
+     * declared ex-date is scheduled from the trailing thirteen months' pattern on
+     * today's holding, at today's rate and today's share count. A {@code null}
+     * year falls back to the un-yeared rolling projection.
      */
     Map<String, List<DividendsCalendarData>> getDividendCalendarByPortfolioId(String portfolioId, Integer year);
 }

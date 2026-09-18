@@ -21,7 +21,8 @@ public class DividendsCalendarController {
     /**
      * Month name -> payments. Without {@code year} this stays the rolling
      * projection older clients expect; with one it reports that calendar year
-     * (closed years as paid, the current year paid-to-date plus schedule).
+     * (closed years as paid, the current year paid-to-date plus schedule, a
+     * future year scheduled end to end).
      */
     @GetMapping("/{portfolioId}/dividends-calendar")
     public Map<String, List<DividendsCalendarData>> getDividendCalendarByPortfolioId(

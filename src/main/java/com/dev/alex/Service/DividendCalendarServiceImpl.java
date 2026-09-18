@@ -96,10 +96,16 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
          * Settled from history wherever history exists: every dividend the ticker
          * declared for that year, valued on the shares actually held on its ex-date,
          * so a position built up or sold during the year is counted as it was and
-         * not as it is now. Only the current year carries a scheduled leg, and only
-         * for months ahead that nothing has been declared for — those repeat last
-         * year's payment pattern against today's holding, which is what the
-         * un-yeared projection does for all twelve months.
+         * not as it is now. The current year carries a scheduled leg for the months
+         * ahead that nothing has been declared for — those repeat last year's
+         * payment pattern against today's holding, which is what the un-yeared
+         * projection does for all twelve months.
+         *
+         * <p>
+         * A future year is scheduled end to end: nothing of it has happened, so
+         * every month that carries no declared ex-date yet is projected from the
+         * trailing twelve months' pattern on today's holding. Closed years carry no
+         * scheduled leg at all.
          */
         @Override
         public Map<String, List<DividendsCalendarData>> getDividendCalendarByPortfolioId(String portfolioId,
@@ -110,6 +116,7 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
 
                 LocalDate today = LocalDate.now();
                 boolean isCurrentYear = year == today.getYear();
+                boolean isFutureYear = year > today.getYear();
 
                 Map<String, BigDecimal> tickerQuantity = holdingService.getAllHoldingsByPortfolioId(portfolioId)
                                 .stream()
@@ -175,18 +182,24 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                 booked.add(date.getMonth());
                         }
 
-                        // scheduled leg - fills the months this year that nothing was declared
-                        // for yet, on last year's pattern
-                        if (!isCurrentYear) {
+                        // scheduled leg - fills the months nothing was declared for yet.
+                        // The current year fills only the months still ahead; a future year
+                        // has none behind it, so all twelve are open. A closed year is
+                        // history and gets no projection.
+                        if (!isCurrentYear && !isFutureYear) {
                                 continue;
                         }
                         BigDecimal quantity = tickerQuantity.getOrDefault(ticker, BigDecimal.ZERO);
                         if (quantity.compareTo(BigDecimal.ZERO) <= 0) {
                                 continue;
                         }
-                        for (Dividend dividend : scheduleTemplate(dividends, today)) {
+                        Collection<Dividend> template = isFutureYear
+                                        ? onePerMonth(trailingYearTemplate(dividends, today))
+                                        : scheduleTemplate(dividends, today);
+                        for (Dividend dividend : template) {
                                 Month month = dividend.getDividendDate().getMonth();
-                                if (month.getValue() <= today.getMonthValue() || booked.contains(month)) {
+                                if (booked.contains(month)
+                                                || (isCurrentYear && month.getValue() <= today.getMonthValue())) {
                                         continue;
                                 }
                                 byMonth.computeIfAbsent(month, m -> new ArrayList<>())
@@ -228,6 +241,28 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                                         .isAfter(kept.getDividendDate()) ? candidate : kept);
                 }
                 return latest.values();
+        }
+
+        /**
+         * The pattern a future year repeats: the last thirteen months of payments,
+         * not last calendar year's. Projecting 2028 off 2026 would freeze a rate two
+         * years stale, while the trailing window always carries the one in force now.
+         *
+         * <p>
+         * Thirteen rather than twelve so an annual payer whose ex-date drifts a few
+         * weeks later each year does not fall out of its own window; {@code
+         * onePerMonth} then collapses the two Novembers that buys onto the newer one.
+         *
+         * <p>
+         * Empty when the ticker has paid nothing in that window, which is the point:
+         * a former payer that stopped projects no income rather than resurrecting a
+         * dead schedule.
+         */
+        private static List<Dividend> trailingYearTemplate(List<Dividend> dividends, LocalDate today) {
+                LocalDate windowStart = today.minusMonths(13);
+                return dividends.stream()
+                                .filter(d -> d.getDividendDate().isAfter(windowStart))
+                                .toList();
         }
 
         /**
