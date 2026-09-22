@@ -61,6 +61,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 holdingsCompleteData.setName(marketData != null ? marketData.getName() : null);
                                 holdingsCompleteData.setShareAmount(
                                                 holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
+                                holdingsCompleteData.setExactShareAmount(holding.getQuantity());
                                 holdingsCompleteData
                                                 .setCostPerShare(holding.getAveragePurchasePrice().setScale(2,
                                                                 RoundingMode.HALF_EVEN));
@@ -133,6 +134,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                 holdingsCompleteData.setName(holding.getName());
                                 holdingsCompleteData.setShareAmount(
                                                 holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
+                                holdingsCompleteData.setExactShareAmount(holding.getQuantity());
                                 holdingsCompleteData.setCostPerShare(holding.getAveragePurchasePrice());
                                 BigDecimal costBasicTotalShare = holding.getAveragePurchasePrice()
                                                 .multiply(holding.getQuantity());

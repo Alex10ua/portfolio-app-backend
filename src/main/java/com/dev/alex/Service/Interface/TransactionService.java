@@ -13,6 +13,6 @@ public interface TransactionService {
 
     List<Transactions> findBuySellByPortfolioIdAndYear(String portfolioId, int year);
 
-    void updateTransaction(Transactions transaction, String transactionId, String portfolioId);
+    Transactions updateTransaction(Transactions transaction, String transactionId, String portfolioId);
 
 }

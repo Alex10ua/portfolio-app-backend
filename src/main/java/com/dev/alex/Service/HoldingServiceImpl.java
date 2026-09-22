@@ -30,6 +30,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class HoldingServiceImpl implements HoldingsService {
     private static final BigDecimal ZERO = BigDecimal.valueOf(0);
     private static final MathContext MATH_CONTEXT = new MathContext(10, RoundingMode.HALF_EVEN);
+    /**
+     * Below this, a leftover share count is rounding dust from split adjustment, not a position.
+     * Split maths runs at MATH_CONTEXT precision, so selling every share can still leave a
+     * 1e-10-scale remainder that keeps a closed holding on the dashboard forever. Far under any
+     * real position (1e-9 BTC is a hundredth of a satoshi).
+     */
+    private static final BigDecimal SHARE_DUST = new BigDecimal("1E-9");
 
     @Autowired
     private HoldingsRepository holdingsRepository;
@@ -319,26 +326,58 @@ public class HoldingServiceImpl implements HoldingsService {
     }
     @Override
     public void recalculateHoldingFromTransactions(String portfolioId, String ticker) {
-        MarketData marketData = marketDataRepository.findByTicker(ticker);
-        List<Transactions> transactions = transactionService.findAllByPortfolioIdAndTicker(portfolioId, ticker);
+        if (ticker == null || ticker.isBlank()) return;
+        // Tickers are stored uppercase (the create path uppercases before saving), so a raw
+        // ticker straight off a request body misses both lookups and used to 500 the edit.
+        String upperTicker = ticker.toUpperCase();
+
+        MarketData marketData = marketDataRepository.findByTicker(upperTicker);
+        List<Transactions> transactions =
+                transactionService.findAllByPortfolioIdAndTicker(portfolioId, upperTicker);
+        if (transactions == null) transactions = Collections.emptyList();
+        // accumulate() applies each split to the transactions dated before it, so the replay has
+        // to be chronological; the repository returns insertion order.
+        transactions = transactions.stream()
+                .sorted(Comparator.comparing(Transactions::getDate,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+
         Position position = accumulate(transactions, marketData != null ? marketData.getSplits() : null);
         BigDecimal totalShares = position.totalShares();
         BigDecimal avgPrice    = position.avgPrice();
-        //find holding by portfolioId and ticker, or create a new one if it doesn't exist
-        Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
 
-        if (holding != null) {
-            // Update existing holding
-            holding.setAveragePurchasePrice(avgPrice);
-            holding.setQuantity(totalShares);
-            holding.setAveragePurchasePrice(avgPrice);
-            holding.setUpdatedAt(LocalDate.now());
-            holdingsRepository.save(holding);
-            log.info("Holding recalculated for portfolioId: {}, ticker: {}", portfolioId, ticker);
+        Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, upperTicker);
+
+        if (holding == null) {
+            // Nothing left to hold and nothing to update — an edit that zeroed out a position
+            // whose holding was already removed is not an error.
+            if (totalShares.compareTo(BigDecimal.ZERO) == 0) return;
+            holding = new Holdings();
+            holding.setHoldingId(UUID.randomUUID().toString());
+            holding.setPortfolioId(portfolioId);
+            holding.setTicker(upperTicker);
+            holding.setAssetType(transactions.stream()
+                    .map(Transactions::getAssetType).filter(Objects::nonNull)
+                    .reduce((first, second) -> second).orElse(null));
+            holding.setCurrency(transactions.stream()
+                    .filter(tx -> tx.getTransactionType() == TransactionType.BUY && tx.getCurrency() != null)
+                    .findFirst().map(Transactions::getCurrency).orElse(null));
+            holding.setCreatedAt(transactions.isEmpty() ? LocalDate.now() : transactions.get(0).getDate());
         }
-        else {
-            throw new RuntimeException("Cant recalculate holding, it does not exist");
+
+        holding.setQuantity(totalShares);
+        holding.setAveragePurchasePrice(avgPrice);
+        holding.setUpdatedAt(LocalDate.now());
+        holdingsRepository.save(holding);
+
+        // Every other recalc path drops a zeroed-out holding; without this an edit that sells the
+        // last share leaves a 0-share row on the dashboard forever.
+        if (totalShares.compareTo(BigDecimal.ZERO) == 0) {
+            holdingsRepository.delete(holding);
+            log.info("Holding removed (0 shares) for portfolioId: {}, ticker: {}", portfolioId, upperTicker);
+            return;
         }
+        log.info("Holding recalculated for portfolioId: {}, ticker: {}", portfolioId, upperTicker);
     }
 
     /** Net position after replaying a ticker's transactions in chronological order. */
@@ -382,6 +421,9 @@ public class HoldingServiceImpl implements HoldingsService {
             }
         }
 
+        if (totalShares.abs().compareTo(SHARE_DUST) < 0) {
+            totalShares = BigDecimal.ZERO;
+        }
         BigDecimal avgPrice = (totalShares.compareTo(BigDecimal.ZERO) > 0)
                 ? totalCost.divide(totalShares, MATH_CONTEXT)
                 : BigDecimal.ZERO;

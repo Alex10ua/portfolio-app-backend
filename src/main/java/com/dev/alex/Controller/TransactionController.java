@@ -130,12 +130,24 @@ public class TransactionController {
     public ResponseEntity<Transactions> updateTransaction(@RequestBody Transactions updatedTransaction,
             @PathVariable String transactionId, @PathVariable String portfolioId, Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
-        transactionService.updateTransaction(updatedTransaction, transactionId, portfolioId);
+        // Read the stored row first: an edit may move the transaction to a different ticker, and
+        // the ticker it is leaving has to be recalculated too or its holding keeps the shares.
+        Transactions before = transactionsRepository.findById(transactionId)
+                .orElseThrow(() -> new RuntimeException("Transaction not found"));
+        if (!portfolioId.equals(before.getPortfolioId())) {
+            throw new AccessDeniedException("Transaction does not belong to this portfolio");
+        }
+        String previousTicker = before.getTicker();
+        Assets previousAssetType = before.getAssetType();
+
+        Transactions saved = transactionService.updateTransaction(updatedTransaction, transactionId, portfolioId);
         performanceService.evictRealizedPnLCache(portfolioId);
-        // recalculateHoldingFromTransactions works for all asset types:
-        // for STOCK it applies split-adjusted calculation; for others splits list is empty (no-op)
-        holdingService.recalculateHoldingFromTransactions(portfolioId, updatedTransaction.getTicker());
-        return ResponseEntity.ok(updatedTransaction);
+
+        syncHoldingForTicker(portfolioId, saved.getTicker(), saved.getAssetType());
+        if (previousTicker != null && !previousTicker.equalsIgnoreCase(saved.getTicker())) {
+            syncHoldingForTicker(portfolioId, previousTicker, previousAssetType);
+        }
+        return ResponseEntity.ok(saved);
     }
 
     @GetMapping("/{portfolioId}/cashBalance")
@@ -173,13 +185,20 @@ public class TransactionController {
                 (transaction.getTransactionType().equals(TransactionType.BUY) ||
                  transaction.getTransactionType().equals(TransactionType.SELL));
         if (isHoldingChange && transaction.getTicker() != null) {
-            recalculateHoldingAfterDelete(portfolioId, transaction);
+            syncHoldingForTicker(portfolioId, transaction.getTicker(), transaction.getAssetType());
         }
         return ResponseEntity.ok(Map.of("deleted", Boolean.TRUE));
     }
 
-    private void recalculateHoldingAfterDelete(String portfolioId, Transactions deleted) {
-        String ticker = deleted.getTicker().toUpperCase();
+    /**
+     * Brings one ticker's holding back in line with whatever transactions remain for it, after a
+     * create/edit/delete. A ticker with no BUY/SELL left has no holding at all, so the row is
+     * removed rather than recalculated to zero. Never throws — a recalc failure must not fail the
+     * write that already committed.
+     */
+    private void syncHoldingForTicker(String portfolioId, String tickerRaw, Assets assetType) {
+        if (tickerRaw == null || tickerRaw.isBlank()) return;
+        String ticker = tickerRaw.toUpperCase();
         try {
             List<Transactions> remaining = transactionsRepository.findAllByPortfolioIdAndTicker(portfolioId, ticker);
             boolean anyHoldingChangeLeft = remaining != null && remaining.stream()
@@ -190,14 +209,14 @@ public class TransactionController {
                 if (holding != null) {
                     holdingsRepository.delete(holding);
                 }
-            } else if (Assets.STOCK.equals(deleted.getAssetType()) || Assets.CRYPTO.equals(deleted.getAssetType())) {
+            } else if (assetType == null || Assets.STOCK.equals(assetType) || Assets.CRYPTO.equals(assetType)) {
                 holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);
             } else {
                 // CUSTOM and legacy COIN/FIGURINE/FUND go through the custom recalc
-                holdingService.recalculateOrCreateCustomHoldingFromTicker(portfolioId, ticker, deleted.getAssetType());
+                holdingService.recalculateOrCreateCustomHoldingFromTicker(portfolioId, ticker, assetType);
             }
         } catch (Exception e) {
-            log.warn("Error recalculating holding for ticker {} after transaction delete", ticker, e);
+            log.warn("Error recalculating holding for ticker {}", ticker, e);
         }
     }
 }

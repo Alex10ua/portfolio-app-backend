@@ -16,6 +16,12 @@ public class HoldingsCompleteData {
     private String ticker;
     private String assetType;
     private BigDecimal shareAmount;
+    /**
+     * Unrounded holding quantity. {@code shareAmount} is rounded to 2dp for display, which is the
+     * wrong number to sell: closing a 5.994666 position with the rounded 5.99 leaves dust behind
+     * and the holding never disappears. Any client booking a quantity must use this field.
+     */
+    private BigDecimal exactShareAmount;
     private BigDecimal costPerShare;
     private BigDecimal costBasis;
     private BigDecimal currentTotalValue;
