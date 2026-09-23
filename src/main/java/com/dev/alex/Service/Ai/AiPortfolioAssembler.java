@@ -17,6 +17,7 @@ import com.dev.alex.Model.UserSettings;
 import com.dev.alex.Repository.MarketDataRepository;
 import com.dev.alex.Repository.PortfolioRepository;
 import com.dev.alex.Service.CashHoldingServiceImpl;
+import com.dev.alex.Service.Dividends.DividendUtils;
 import com.dev.alex.Service.HoldingsCompleteDataServiceImpl;
 import com.dev.alex.Service.PortfolioPerformanceServiceImpl;
 import com.dev.alex.Service.TagServiceImpl;
@@ -43,8 +44,11 @@ import java.util.stream.Collectors;
 /**
  * Turns the SPA-facing holding, cash and tag data into the enriched, per-currency
  * shape the AI endpoints answer in. Reads existing services only — no new
- * business logic, and no FX except in allocationTargets, where a portfolio-wide
- * weight cannot exist without it.
+ * business logic. FX is applied in two places only, each because the figure has no
+ * meaning without it: a position's market value and profit are brought from the
+ * quote currency into the book currency when the two differ (a coin bought in EUR
+ * but quoted in USD, a London line quoted in pence), and allocationTargets weighs
+ * positions portfolio-wide in the base currency.
  */
 @Service
 public class AiPortfolioAssembler {
@@ -65,6 +69,8 @@ public class AiPortfolioAssembler {
     private PortfolioRepository portfolioRepository;
     @Autowired
     private AiEnvelopeService envelopeService;
+    @Autowired
+    private DividendUtils dividendUtils;
 
     // ---------------------------------------------------------------- positions
 
@@ -102,20 +108,46 @@ public class AiPortfolioAssembler {
                     if (t.getTicker() != null) targets.put(t.getTicker(), t.getPercent());
                 }));
 
+        // A holding row reports market figures in the quote currency and cost in the book
+        // currency, and leaves profit null where the two differ (HoldingsCompleteData). Positions
+        // state value and profit in the book currency, so those rows are converted here at the
+        // envelope's own rates — the rates the answer ships with.
+        Map<String, BigDecimal> rates = envelopeService.fxRates();
+        Map<String, BigDecimal> valueInBook = new HashMap<>();
+        for (HoldingsCompleteData h : holdings) {
+            valueInBook.put(h.getTicker(), convert(marketValue(h), quoteCurrencyOf(h), currencyOf(h), rates));
+        }
+
         // Bucket totals first — percentOfCurrencyBucket needs the denominator.
         Map<String, BigDecimal> valueByCurrency = new HashMap<>();
         for (HoldingsCompleteData h : holdings) {
-            valueByCurrency.merge(currencyOf(h), marketValue(h), BigDecimal::add);
+            BigDecimal value = valueInBook.get(h.getTicker());
+            if (value != null) valueByCurrency.merge(currencyOf(h), value, BigDecimal::add);
         }
+
+        Map<String, BigDecimal> received = dividendsReceivedByTicker(portfolioId, holdings, marketByTicker);
 
         LocalDate today = LocalDate.now();
         List<AiPosition> out = new ArrayList<>(holdings.size());
         for (HoldingsCompleteData h : holdings) {
             MarketData md = h.getTicker() == null ? null : marketByTicker.get(h.getTicker());
             String bookCurrency = currencyOf(h);
-            BigDecimal value = marketValue(h);
+            String quoteCurrency = quoteCurrencyOf(h);
+            BigDecimal value = valueInBook.get(h.getTicker());
             BigDecimal bucket = valueByCurrency.getOrDefault(bookCurrency, BigDecimal.ZERO);
             LocalDate updatedAt = md == null ? null : md.getUpdatedAt();
+
+            BigDecimal profit = h.getTotalProfit();
+            BigDecimal profitPercent = h.getTotalProfitPercentage();
+            BigDecimal yieldOnCost = h.getDividendYieldOnCost();
+            if (!quoteCurrency.equals(bookCurrency)) {
+                profit = value == null || h.getCostBasis() == null ? null
+                        : value.subtract(h.getCostBasis()).setScale(2, RoundingMode.HALF_EVEN);
+                profitPercent = percentOf(profit, h.getCostBasis());
+                BigDecimal dividendInBook = convert(h.getDividend(), quoteCurrency, bookCurrency, rates);
+                yieldOnCost = h.getCostPerShare() == null || h.getCostPerShare().signum() == 0 ? null
+                        : percentOf(dividendInBook, h.getCostPerShare());
+            }
 
             out.add(new AiPosition(
                     h.getTicker(),
@@ -126,13 +158,13 @@ public class AiPortfolioAssembler {
                     h.getCostBasis(),
                     h.getCurrentShareValue(),
                     value,
-                    h.getTotalProfit(),
-                    h.getTotalProfitPercentage(),
-                    h.getDailyChange(),
+                    profit,
+                    profitPercent,
+                    dayChangePercent(md),
                     h.getDividend(),
                     h.getDividendYield(),
-                    h.getDividendYieldOnCost(),
-                    h.getTotalReceivedDividend(),
+                    yieldOnCost,
+                    received.get(h.getTicker()),
                     bookCurrency,
                     md == null ? null : md.getCurrency(),
                     percentOf(value, bucket),
@@ -193,8 +225,12 @@ public class AiPortfolioAssembler {
                     : total.multiply(BigDecimal.valueOf(target)).divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_EVEN);
             BigDecimal deltaBase = targetValue == null || inBase == null ? null : targetValue.subtract(inBase);
             BigDecimal deltaNative = convert(deltaBase, baseCurrency, p.currency(), rates);
-            BigDecimal deltaShares = deltaNative == null || p.price() == null || p.price().signum() == 0 ? null
-                    : deltaNative.divide(p.price(), 4, RoundingMode.HALF_EVEN);
+            // price is in the quote currency (GBp for a London line, USD for a coin bought in
+            // EUR), deltaNative in the book currency — bring the trade value to the quote first
+            String quote = p.quoteCurrency() == null || p.quoteCurrency().isBlank() ? p.currency() : p.quoteCurrency();
+            BigDecimal deltaInQuote = convert(deltaNative, p.currency(), quote, rates);
+            BigDecimal deltaShares = deltaInQuote == null || p.price() == null || p.price().signum() == 0 ? null
+                    : deltaInQuote.divide(p.price(), 4, RoundingMode.HALF_EVEN);
 
             rows.add(new AiAllocationTargets.Row(
                     p.ticker(), p.name(), p.assetType(), p.currency(), true,
@@ -409,6 +445,49 @@ public class AiPortfolioAssembler {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * Day move of the quote, in percent. HoldingsCompleteData.dailyChange is the per-share
+     * difference in the quote currency, not a percentage — passing it through made ASML's
+     * $31.40 move read as "31.40%".
+     */
+    private static BigDecimal dayChangePercent(MarketData md) {
+        if (md == null || md.getPrice() == null || md.getPriceYesterday() == null
+                || md.getPriceYesterday().signum() == 0) return null;
+        return md.getPrice().subtract(md.getPriceYesterday())
+                .multiply(BigDecimal.valueOf(100))
+                .divide(md.getPriceYesterday(), 4, RoundingMode.HALF_EVEN);
+    }
+
+    /**
+     * Dividends each stock has paid this portfolio, in its quote currency — the computation the
+     * Dividends page runs (DividendsServiceImpl), limited to the tickers held now. Full
+     * market-data docs are already loaded, so this costs one transaction read.
+     */
+    private Map<String, BigDecimal> dividendsReceivedByTicker(String portfolioId,
+                                                             List<HoldingsCompleteData> holdings,
+                                                             Map<String, MarketData> marketByTicker) {
+        Map<String, BigDecimal> out = new HashMap<>();
+        List<Transactions> all = transactionService.findAllByPortfolioId(portfolioId);
+        if (all == null || all.isEmpty()) return out;
+        Map<String, List<Transactions>> byTicker = all.stream()
+                .filter(t -> t.getTicker() != null)
+                .collect(Collectors.groupingBy(Transactions::getTicker));
+        for (HoldingsCompleteData h : holdings) {
+            if (!"STOCK".equals(h.getAssetType()) || h.getTicker() == null) continue;
+            MarketData md = marketByTicker.get(h.getTicker());
+            if (md == null || md.getDividends() == null || md.getDividends().isEmpty()) continue;
+            BigDecimal amount = dividendUtils.calculateAllDividendsByStockAuto(
+                    md.getDividends(), byTicker.getOrDefault(h.getTicker(), List.of()), md.getSplits());
+            out.put(h.getTicker(), amount.setScale(2, RoundingMode.HALF_EVEN));
+        }
+        return out;
+    }
+
+    /** Currency the row's market figures are in; the book currency when the provider named none. */
+    private String quoteCurrencyOf(HoldingsCompleteData h) {
+        return h.getQuoteCurrency() == null || h.getQuoteCurrency().isBlank() ? currencyOf(h) : h.getQuoteCurrency();
+    }
 
     /** Matches the frontend's holdingTotalValue(): trust the backend figure, fall back for legacy rows. */
     private BigDecimal marketValue(HoldingsCompleteData h) {

@@ -3,7 +3,9 @@ package com.dev.alex.Service;
 import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.PriceHistoryEntry;
+import com.dev.alex.Model.Holdings;
 import com.dev.alex.Repository.CustomAssetRepository;
+import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.MarketDataRepository;
 import com.dev.alex.Service.Interface.CustomAssetService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +26,9 @@ public class CustomAssetServiceImpl implements CustomAssetService {
 
     @Autowired
     private MarketDataRepository marketDataRepository;
+
+    @Autowired
+    private HoldingsRepository holdingsRepository;
 
     @Override
     public CustomAsset create(String portfolioId, CustomAsset customAsset) {
@@ -145,6 +150,7 @@ public class CustomAssetServiceImpl implements CustomAssetService {
                 marketData.setUpdatedAt(effectiveDate);
                 marketDataRepository.save(marketData);
             }
+            syncHoldingPrice(portfolioId, asset.getTicker(), newPrice);
         }
         historyMap.put(effectiveDate, newPrice);
 
@@ -191,8 +197,21 @@ public class CustomAssetServiceImpl implements CustomAssetService {
                 marketData.setUpdatedAt(latestDate);
                 marketDataRepository.save(marketData);
             }
+            syncHoldingPrice(portfolioId, asset.getTicker(), latestPrice);
         }
 
         return customAssetRepository.save(asset);
+    }
+
+    /**
+     * Holdings.priceNow is written when the holding is created and was never touched again, so
+     * anything reading it (the Performance page did) kept the creation-day price for good.
+     */
+    private void syncHoldingPrice(String portfolioId, String ticker, BigDecimal price) {
+        Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker.toUpperCase());
+        if (holding != null) {
+            holding.setPriceNow(price);
+            holdingsRepository.save(holding);
+        }
     }
 }

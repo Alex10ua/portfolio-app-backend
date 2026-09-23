@@ -159,7 +159,7 @@ public class ImportBatchController {
                 if (remaining.isEmpty()) {
                     Holdings holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
                     if (holding != null) {
-                        holdingsRepository.delete(holding);
+                        holdingService.removeHolding(holding);
                     }
                 } else if (Assets.STOCK.equals(entry.getValue()) || Assets.CRYPTO.equals(entry.getValue())) {
                     holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);

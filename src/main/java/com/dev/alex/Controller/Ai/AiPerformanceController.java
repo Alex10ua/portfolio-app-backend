@@ -71,6 +71,11 @@ public class AiPerformanceController {
                 raw == null ? null : raw.getTotalReturn(),
                 raw == null ? null : raw.getTotalReturnPct(),
                 raw == null ? null : raw.getXirr(),
+                raw == null ? null : raw.getTotalInvestedByCurrency(),
+                raw == null ? null : raw.getCurrentValueByCurrency(),
+                raw == null ? null : raw.getOpenCostBasisByCurrency(),
+                raw == null ? null : raw.getRealizedPnLByCurrency(),
+                raw == null ? null : raw.getTotalDividendsByCurrency(),
                 series);
 
         return envelopeService.wrap(payload,

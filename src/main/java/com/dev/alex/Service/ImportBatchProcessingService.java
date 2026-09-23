@@ -38,7 +38,10 @@ public class ImportBatchProcessingService {
             }
 
             for (Map.Entry<String, Assets> entry : tickerAssetMap.entrySet()) {
-                if (entry.getValue().equals(Assets.STOCK)) {
+                // CRYPTO is market data like STOCK (CoinGecko prices, a real marketData doc). On the
+                // custom path it got no provider fetch and a price-less stub, so an imported coin
+                // showed no value until some later write touched it.
+                if (entry.getValue().equals(Assets.STOCK) || entry.getValue().equals(Assets.CRYPTO)) {
                     holdingService.recalculateOrCreateHoldingFromTicker(portfolioId, entry.getKey(), entry.getValue());
                 } else {
                     holdingService.recalculateOrCreateCustomHoldingFromTicker(portfolioId, entry.getKey(), entry.getValue());

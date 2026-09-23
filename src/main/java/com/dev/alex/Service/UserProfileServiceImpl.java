@@ -24,6 +24,8 @@ public class UserProfileServiceImpl implements UserProfileService {
     private UserSettingsRepository userSettingsRepository;
     @Autowired
     private PasswordEncoder passwordEncoder;
+    @Autowired
+    private ClosedPositionCleanupService closedPositionCleanupService;
 
     @Override
     public UserProfileResponse getProfile(String username) {
@@ -75,6 +77,7 @@ public class UserProfileServiceImpl implements UserProfileService {
     @Override
     public UserSettings saveSettings(String username, UserSettings settings) {
         settings.setUsername(username); // identity always from the session, never the body
+        closedPositionCleanupService.dropTargetsForUnheldTickers(settings);
         settings.setUpdatedAt(new Date());
         return userSettingsRepository.save(settings);
     }

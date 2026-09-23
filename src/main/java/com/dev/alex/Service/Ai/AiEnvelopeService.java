@@ -19,10 +19,12 @@ import java.util.Set;
 /**
  * Builds the {@link AiEnvelope} every /api/v1/ai/** response ships in.
  * <p>
- * The API never converts currency (CLAUDE.md: FX is the presentation layer's
+ * The API does not convert currency (CLAUDE.md: FX is the presentation layer's
  * job), so an AI caller has to do it. This service supplies the two things that
  * makes possible: the rate table and the formula, plus the caveats that apply
- * to the payload.
+ * to the payload. The two exceptions — a position's value brought into its book
+ * currency, and allocation-target weights — convert at these same rates and say so
+ * in their notes.
  */
 @Service
 public class AiEnvelopeService {
@@ -32,9 +34,15 @@ public class AiEnvelopeService {
             "amount_in_TARGET = amount * fxRates[TARGET] / fxRates[SOURCE]";
 
     public static final String NOTE_NATIVE_CURRENCY =
-            "Every money figure is in its own native currency, named by the currency field beside it. "
-                    + "Nothing here is converted. Use fxRates and conversionFormula to convert, and never "
-                    + "add two amounts whose currency codes differ.";
+            "Every money figure is in the currency named by the currency field beside it. Nothing is "
+                    + "converted unless another note here says so. Use fxRates and conversionFormula to "
+                    + "convert, and never add two amounts whose currency codes differ.";
+
+    public static final String NOTE_POSITION_CURRENCIES =
+            "Positions carry two currencies. costPerShare, costBasis, marketValue and unrealizedProfit are "
+                    + "in currency (the book currency the position was bought in); where quoteCurrency "
+                    + "differs, marketValue was converted from it at the fxRates above. price, "
+                    + "dividendPerShare and dividendsReceived stay in quoteCurrency.";
 
     public static final String NOTE_PENCE =
             "'GBp'/'GBx' mean pence, not pounds: 100 GBp = 1 GBP. fxRates already contains entries for them "
@@ -52,8 +60,10 @@ public class AiEnvelopeService {
 
     public static final String NOTE_UNCONVERTED_SCALARS =
             "Fields suffixed UnconvertedNativeSum were summed across currencies without FX. They are exact "
-                    + "only for a single-currency portfolio; for a mixed one, rebuild them from timeSeries "
-                    + "valueByCurrency or from the per-currency totals in the snapshot.";
+                    + "only when every amount shares one currency (a EUR-booked coin quoted in USD already "
+                    + "breaks that); otherwise rebuild them from the ...ByCurrency maps: convert "
+                    + "currentValueByCurrency and openCostBasisByCurrency into one currency and subtract for "
+                    + "unrealized profit.";
 
     public static final String NOTE_SPARSE_SHARES =
             "sharesHistory is sparse: a point exists only where the share count changed. Carry the last "

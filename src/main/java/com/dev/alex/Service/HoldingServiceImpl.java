@@ -50,6 +50,19 @@ public class HoldingServiceImpl implements HoldingsService {
     private FlaskClientService flaskClientService;
     @Autowired
     private PortfolioRepository portfolioRepository;
+    @Autowired
+    private ClosedPositionCleanupService closedPositionCleanupService;
+
+    /**
+     * The one way a holding row goes away: a closed position also loses its allocation target
+     * and tags, so every path that drops a holding must come through here.
+     */
+    @Override
+    public void removeHolding(Holdings holding) {
+        if (holding == null) return;
+        holdingsRepository.delete(holding);
+        closedPositionCleanupService.onPositionClosed(holding.getPortfolioId(), holding.getTicker());
+    }
 
     @Override
     public List<Holdings> getAllHoldingsByPortfolioId(String portfolioId) {
@@ -61,8 +74,12 @@ public class HoldingServiceImpl implements HoldingsService {
         return holdingsRepository.findByPortfolioIdAndTicker(portfolioId, tickerSymbol.toUpperCase());
     }
 
+    /**
+     * @return true when this call fetched market data from the provider (the ticker had none), so
+     *         the caller need not trigger another refresh for the same ticker.
+     */
     @Override
-    public void updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction) {
+    public boolean updateOrCreateHoldingInPortfolioUpdated(String portfolioId, Transactions newTransaction) {
         Holdings holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
         log.info("Inside updateOrCreateHoldingInPortfolioUpdated");
         MarketData marketDataCheck = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
@@ -79,8 +96,9 @@ public class HoldingServiceImpl implements HoldingsService {
         }
         // null price also triggers a fetch: a stub doc (e.g. created by the custom
         // holding path or a failed provider run) must not block retries forever
+        boolean fetched = false;
         if (marketDataCheck == null || marketDataCheck.getPrice() == null) {
-            //async call to flask server to get market data
+            fetched = true;
             try{
                 tickersService.createTicker(newTransaction.getTicker().toUpperCase());
                 ResponseEntity<String> response = flaskClientService.sendSyncPostRequest(
@@ -96,7 +114,9 @@ public class HoldingServiceImpl implements HoldingsService {
             } catch (Exception e) {
                log.error("Error in sync call to flask server: " + e.getMessage());
             }
-
+            // Read again: the splits the fetch just stored have to reach this first accumulate, or a
+            // BUY dated before a split books the pre-split share count until the next write.
+            marketDataCheck = marketDataRepository.findByTicker(newTransaction.getTicker().toUpperCase());
         }
 
         if (holding == null) {
@@ -118,7 +138,6 @@ public class HoldingServiceImpl implements HoldingsService {
         List<Transactions> transactionsList =
                 transactionService.findAllByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
         transactionsList.sort(Comparator.comparing(Transactions::getDate));
-        // reuse marketDataCheck fetched above — avoids a second findByTicker for the same ticker
         List<Splits> splitsList = (marketDataCheck != null) ? marketDataCheck.getSplits() : null;
         Position position = accumulate(transactionsList, splitsList);
         BigDecimal totalShares   = position.totalShares();
@@ -132,9 +151,9 @@ public class HoldingServiceImpl implements HoldingsService {
         // remove if 0 shares
         holding = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
         if (holding.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
-            holdingsRepository.delete(holding);
+            removeHolding(holding);
         }
-
+        return fetched;
     }
 
     @Override
@@ -200,7 +219,7 @@ public class HoldingServiceImpl implements HoldingsService {
         holdingsRepository.save(holding);
 
         if (totalShares.compareTo(BigDecimal.ZERO) == 0) {
-            holdingsRepository.delete(holding);
+            removeHolding(holding);
         }
     }
 
@@ -263,7 +282,7 @@ public class HoldingServiceImpl implements HoldingsService {
         }
 
         if (totalShares.compareTo(BigDecimal.ZERO) == 0) {
-            holdingsRepository.delete(holding);
+            removeHolding(holding);
         }
     }
 
@@ -321,7 +340,7 @@ public class HoldingServiceImpl implements HoldingsService {
         // remove if 0 shares
         Holdings holdingZero = findHoldingByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
         if (holdingZero.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
-            holdingsRepository.delete(holdingZero);
+            removeHolding(holdingZero);
         }
     }
     @Override
@@ -373,7 +392,7 @@ public class HoldingServiceImpl implements HoldingsService {
         // Every other recalc path drops a zeroed-out holding; without this an edit that sells the
         // last share leaves a 0-share row on the dashboard forever.
         if (totalShares.compareTo(BigDecimal.ZERO) == 0) {
-            holdingsRepository.delete(holding);
+            removeHolding(holding);
             log.info("Holding removed (0 shares) for portfolioId: {}, ticker: {}", portfolioId, upperTicker);
             return;
         }

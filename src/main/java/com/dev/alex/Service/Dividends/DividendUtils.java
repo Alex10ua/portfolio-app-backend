@@ -23,74 +23,67 @@ public class DividendUtils {
     private static final DateTimeFormatter YEAR_MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
 
     /**
-     * Calculates the number of shares held on a specific target date,
-     * considering all transactions and splits up to that date.
+     * Shares entitled to the dividend with the given ex-date, in today's share basis.
      *
-     * @param targetDate The date for which to calculate shareholding (typically ex-dividend date).
-     * @param sortedTransactions A list of transactions for the stock, sorted chronologically by date.
-     * @param sortedSplits A list of splits for the stock, sorted chronologically by date.
-     * @return The number of shares held on the targetDate.
+     * <p>Entitlement: only trades dated before the ex-date count. A BUY on the ex-date buys the
+     * share without the dividend and a SELL on the ex-date still collects it — the previous
+     * on-or-before test had both backwards.
+     *
+     * <p>Basis: stored dividend amounts are split-adjusted to today — Yahoo back-scales every
+     * pre-split payment (NVDA's $0.04 of Dec 2023 is stored as 0.004). The share count has to be
+     * in the same basis, so each trade is multiplied by every split dated after it, whether that
+     * split falls before or after the ex-date. Counting shares in the ex-date's own basis made
+     * every dividend paid before a later split read smaller by the split factor.
+     *
+     * <p>A trade dated on a split day is already post-split (a Yahoo split date is the first
+     * session that trades split-adjusted), the same rule as HoldingServiceImpl.accumulate.
+     *
+     * @param exDividendDate the dividend's ex-date
+     * @param transactions   the ticker's transactions, in any order
+     * @param splits         the ticker's splits, in any order
      */
-    public BigDecimal getSharesHeldOnDate(LocalDate targetDate,
-                                          List<Transactions> sortedTransactions,
-                                          List<Splits> sortedSplits) {
-        BigDecimal sharesHeld = BigDecimal.ZERO;
+    public BigDecimal getSharesHeldOnDate(LocalDate exDividendDate,
+                                          List<Transactions> transactions,
+                                          List<Splits> splits) {
+        if (exDividendDate == null || transactions == null) return ZERO;
 
-        // Create a combined list of events (transactions and splits)
-        List<Object> events = new ArrayList<>();
-        if (sortedTransactions != null) events.addAll(sortedTransactions);
-        if (sortedSplits != null) events.addAll(sortedSplits);
+        List<Transactions> entitled = transactions.stream()
+                .filter(tx -> tx != null && tx.getDate() != null && tx.getQuantity() != null
+                        && tx.getDate().isBefore(exDividendDate))
+                .sorted(Comparator.comparing(Transactions::getDate))
+                .toList();
 
-        // Sort all events chronologically
-        events.sort(Comparator.comparing(event -> {
-            if (event instanceof Transactions) {
-                return ((Transactions) event).getDate();
-            } else if (event instanceof Splits) {
-                return ((Splits) event).getSplitDate();
-            }
-            throw new IllegalArgumentException("Unknown event type in timeline");
-        }));
-
-        for (Object event : events) {
-            if (event instanceof Transactions) {
-                Transactions tx = (Transactions) event;
-                // Process transaction only if it's on or before the targetDate
-                if (tx.getDate() != null && targetDate != null && !tx.getDate().isAfter(targetDate)) {
-                    if (tx.getTransactionType() == TransactionType.BUY) {
-                        sharesHeld = sharesHeld.add(tx.getQuantity());
-                    } else if (tx.getTransactionType() == TransactionType.SELL) {
-                        sharesHeld = sharesHeld.subtract(tx.getQuantity());
-                        if (sharesHeld.compareTo(ZERO) < 0) {
-                            // This indicates an issue, perhaps selling more than owned.
-                            System.err.println("Warning: Shares sold resulted in negative balance for ticker before/on " + targetDate + ". Capping at zero.");
-                            sharesHeld = ZERO; // throw new IllegalStateException("Oversold stock " + tx.getTicker());
-                        }
-                    }
-                } else {
-                    // Transaction is after targetDate, no need to process further transactions
-                    // as events are sorted
-                    break;
-                }
-            } else if (event instanceof Splits) {
-                Splits split = (Splits) event;
-                // Apply split only if it's on or before the targetDate
-                if (split.getSplitDate() != null && targetDate != null && !split.getSplitDate().isAfter(targetDate)) {
-                    if (sharesHeld.compareTo(ZERO) != 0) {
-                        sharesHeld = sharesHeld.multiply(split.getRatioSplit()).setScale(6, RoundingMode.HALF_UP);
-                    }
-                } else {
-                    // Split is after targetDate, no need to process further splits in a sorted list
-                    // (though transactions might still be relevant if they are before targetDate and after this split)
-                }
+        BigDecimal sharesHeld = ZERO;
+        for (Transactions tx : entitled) {
+            BigDecimal quantity = tx.getQuantity().multiply(splitFactorAfter(splits, tx.getDate()));
+            if (tx.getTransactionType() == TransactionType.BUY) {
+                sharesHeld = sharesHeld.add(quantity);
+            } else if (tx.getTransactionType() == TransactionType.SELL) {
+                // oversell (e.g. a partial import missing its BUYs) is clamped, never negative
+                sharesHeld = sharesHeld.subtract(quantity).max(ZERO);
             }
         }
-        return sharesHeld.compareTo(ZERO) > 0 ? sharesHeld : ZERO; // Ensure non-negative result
+        return sharesHeld;
+    }
+
+    /** Product of the ratios of every split dated after {@code date}; 1 when none. */
+    private static BigDecimal splitFactorAfter(List<Splits> splits, LocalDate date) {
+        BigDecimal factor = BigDecimal.ONE;
+        if (splits == null) return factor;
+        for (Splits split : splits) {
+            if (split == null || split.getSplitDate() == null || split.getRatioSplit() == null
+                    || split.getRatioSplit().signum() <= 0) continue;
+            if (date.isBefore(split.getSplitDate())) {
+                factor = factor.multiply(split.getRatioSplit());
+            }
+        }
+        return factor;
     }
 
     /**
      * Calculates the total received dividends for a single stock based on its transaction history,
      * market dividend announcements, and stock splits.
-     * Transactions and Splits lists must be sorted by date.
+     * Transactions and splits may come in any order.
      */
     public BigDecimal calculateAllDividendsByStockAuto(List<Dividend> dividendList,
                                                        List<Transactions> sortedTransactionsList,
@@ -118,7 +111,7 @@ public class DividendUtils {
     /**
      * Calculates received dividends aggregated per month for a set of tickers.
      * Relies on accurate historical transaction data, market dividends, and splits for each ticker.
-     * The input lists (transactions, splits) for each ticker MUST be sorted by date.
+     * Transactions and splits may come in any order.
      */
     public Map<String, BigDecimal> calculateDividendsPerMonthAuto(
             Map<String, List<Transactions>> transactionsByTicker,

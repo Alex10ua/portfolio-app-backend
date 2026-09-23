@@ -30,9 +30,10 @@ public interface MarketDataRepository extends MongoRepository<MarketData, String
     MarketData findByTickerForHoldingsPage(@Param("ticker") String ticker);
 
     // Batch variant of findByTickerForHoldingsPage — one query for all a portfolio's
-    // tickers instead of one per holding (avoids N+1). Projects ticker to key the result.
+    // tickers instead of one per holding (avoids N+1). Projects ticker to key the result,
+    // and currency because the holdings rows report it as quoteCurrency.
     @Query(value = "{'ticker': {'$in': ?0}}",
-           fields = "{'ticker' : 1, 'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1, 'sharesOutstanding' : 1, 'name' : 1}")
+           fields = "{'ticker' : 1, 'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1, 'sharesOutstanding' : 1, 'name' : 1, 'currency' : 1}")
     List<MarketData> findByTickerInForHoldingsPage(java.util.Collection<String> tickers);
 
     @Query(value = "{'ticker' : #{#ticker}}")

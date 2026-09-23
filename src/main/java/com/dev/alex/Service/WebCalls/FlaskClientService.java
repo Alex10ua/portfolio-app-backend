@@ -5,6 +5,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClientRequest;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -12,6 +13,17 @@ import java.util.Map;
 
 @Service
 public class FlaskClientService {
+
+    /** Ceiling for the ordinary provider calls; matches the WebClient's default response timeout. */
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+
+    /**
+     * SEC EDGAR calls are paced process-wide on the Flask side (5 s per request by default):
+     * fundamentals is ~16 requests ≈ 80 s, shares history ~5 ≈ 25 s, and both queue behind a
+     * running bulk backfill. Under the 30 s default every fundamentals load failed with a
+     * timeout even though Flask went on to write the document.
+     */
+    private static final Duration SEC_TIMEOUT = Duration.ofMinutes(5);
 
     private final WebClient webClient;
 
@@ -34,13 +46,7 @@ public class FlaskClientService {
         if (assetType != null) {
             body.put("assetType", assetType);
         }
-        return webClient.post()
-                .uri("/update/auto")
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .retrieve()
-                .toEntity(String.class)
-                .block(Duration.ofSeconds(35)); // hard ceiling; connect/response timeouts set on the WebClient
+        return post("/update/auto", body, DEFAULT_TIMEOUT);
     }
 
     /** Tells Flask to fetch price history for the ticker and store it in MongoDB. */
@@ -61,7 +67,7 @@ public class FlaskClientService {
      * Synchronous — the caller reads the freshly-written doc right after this returns.
      */
     public ResponseEntity<String> refreshFundamentals(String ticker) {
-        return postTicker("/update/fundamentals", ticker);
+        return postTicker("/update/fundamentals", ticker, SEC_TIMEOUT);
     }
 
     /**
@@ -69,7 +75,7 @@ public class FlaskClientService {
      * One .info request on the Flask side — no price-history download.
      */
     public ResponseEntity<String> refreshStatistics(String ticker) {
-        return postTicker("/update/statistics", ticker);
+        return postTicker("/update/statistics", ticker, DEFAULT_TIMEOUT);
     }
 
     /**
@@ -78,7 +84,7 @@ public class FlaskClientService {
      * but not held, so nothing has ever fetched it.
      */
     public ResponseEntity<String> refreshFull(String ticker) {
-        return postTicker("/update/full", ticker);
+        return postTicker("/update/full", ticker, DEFAULT_TIMEOUT);
     }
 
     /**
@@ -86,18 +92,34 @@ public class FlaskClientService {
      * US-registered issuers only; others come back as {"status":"no_data"}.
      */
     public ResponseEntity<String> refreshSharesHistory(String ticker) {
-        return postTicker("/update/sharesOutstandingHistory", ticker);
+        return postTicker("/update/sharesOutstandingHistory", ticker, SEC_TIMEOUT);
     }
 
-    private ResponseEntity<String> postTicker(String uri, String ticker) {
+    private ResponseEntity<String> postTicker(String uri, String ticker, Duration timeout) {
         Map<String, String> body = new HashMap<>();
         body.put("ticker", ticker);
+        return post(uri, body, timeout);
+    }
+
+    /**
+     * The response timeout is set per request: the WebClient's own (WebClientConfig) is the
+     * default for calls that set nothing, and a longer one here overrides it for this request
+     * only. The block() ceiling sits just above it so the Netty timeout, which carries the
+     * clearer error, fires first.
+     */
+    private ResponseEntity<String> post(String uri, Map<String, String> body, Duration timeout) {
         return webClient.post()
                 .uri(uri)
+                .httpRequest(request -> {
+                    Object nativeRequest = request.getNativeRequest();
+                    if (nativeRequest instanceof HttpClientRequest reactorRequest) {
+                        reactorRequest.responseTimeout(timeout);
+                    }
+                })
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .retrieve()
                 .toEntity(String.class)
-                .block(Duration.ofSeconds(35));
+                .block(timeout.plusSeconds(5));
     }
 }

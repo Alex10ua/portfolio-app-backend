@@ -35,6 +35,10 @@ public class UsersController {
         if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {
             throw new IllegalArgumentException("Password is required");
         }
+        // same floor POST /me/password enforces — registration used to accept a 1-character password
+        if (user.getPasswordHash().length() < 8) {
+            throw new IllegalArgumentException("Password must be at least 8 characters");
+        }
         if (usersRepository.findByUsername(user.getUsername()).isPresent()) {
             throw new IllegalArgumentException("Username already taken");
         }

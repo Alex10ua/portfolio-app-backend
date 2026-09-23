@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Slf4j
@@ -60,53 +61,89 @@ public class TransactionController {
     public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction,
             @PathVariable String portfolioId, Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
-        try {
-            transaction.setTransactionId(UUID.randomUUID().toString());
-            transaction.setPortfolioId(portfolioId);
-            if (transaction.getPrice() != null && transaction.getQuantity() != null) {
-                transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
+        transaction.setTransactionId(UUID.randomUUID().toString());
+        transaction.setPortfolioId(portfolioId);
+        if (transaction.getPrice() != null && transaction.getQuantity() != null) {
+            transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
+        }
+        if (transaction.getTicker() != null) {
+            transaction.setTicker(transaction.getTicker().toUpperCase());
+        }
+
+        // Only BUY/SELL change a share count. DIVIDEND/TAX and DEPOSIT/WITHDRAWAL are cash events
+        // and never touch a holding — a stock DIVIDEND used to fall through to the custom-asset
+        // path, which recomputes the holding without splits and wrote a pre-split share count back.
+        Assets assetType = transaction.getAssetType();
+        boolean isHoldingChange = transaction.getTransactionType() == TransactionType.BUY
+                || transaction.getTransactionType() == TransactionType.SELL;
+
+        // Everything that can reject the request runs before the save. A failure after it used to
+        // answer 500 for a transaction that was already stored, and the retry booked it twice.
+        if (isHoldingChange) {
+            if (transaction.getTicker() == null || transaction.getTicker().isBlank()) {
+                throw new IllegalArgumentException("Ticker is required for a " + transaction.getTransactionType() + " transaction");
             }
-            if (transaction.getTicker() != null) {
-                transaction.setTicker(transaction.getTicker().toUpperCase());
+            if (transaction.getDate() == null) {
+                throw new IllegalArgumentException("Date is required for a " + transaction.getTransactionType() + " transaction");
             }
-            Transactions transactionStatus = transactionsRepository.save(transaction);
-            performanceService.evictRealizedPnLCache(portfolioId);
-            boolean isCash = transaction.getTransactionType() != null &&
-                    (transaction.getTransactionType().equals(TransactionType.DEPOSIT) ||
-                     transaction.getTransactionType().equals(TransactionType.WITHDRAWAL));
-            // DIVIDEND and TAX are cash events, not share quantity changes — skip holding update
-            boolean isHoldingChange = transaction.getTransactionType() != null &&
-                    (transaction.getTransactionType().equals(TransactionType.BUY) ||
-                     transaction.getTransactionType().equals(TransactionType.SELL));
-            if (isCash) {
-                // Cash deposits and withdrawals do not affect asset holdings
-            } else if (isHoldingChange && transaction.getAssetType() != null
-                    && (transaction.getAssetType().equals(Assets.STOCK) || transaction.getAssetType().equals(Assets.CRYPTO))) {
-                // CRYPTO goes through the same market-data flow as STOCK; assetType
-                // tells Flask to use CoinGecko even before the holding exists
-                holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
-                tickersService.saveIfNotExists(transaction.getTicker());
-                flaskClientService.sendSyncPostRequest(transaction.getTicker(), transaction.getAssetType().name());
-            } else if (transaction.getAssetType() != null && transaction.getAssetType().equals(Assets.CUSTOM)) {
-                // Populate name and priceNow from the custom asset definition
-                CustomAsset customAsset = customAssetService.findByPortfolioIdAndTicker(portfolioId, transaction.getTicker().toUpperCase());
+        }
+        if (Assets.CUSTOM.equals(assetType) && transaction.getTicker() != null) {
+            // Name and priceNow ride on the stored row: a later recalculation rebuilds the holding
+            // from the latest transaction, so they must be filled before the save, not after.
+            Optional<CustomAsset> definition =
+                    customAssetService.findOptionalByPortfolioIdAndTicker(portfolioId, transaction.getTicker());
+            if (definition.isEmpty() && isHoldingChange) {
+                throw new IllegalArgumentException("No custom asset '" + transaction.getTicker()
+                        + "' in this portfolio — create it before recording a transaction");
+            }
+            definition.ifPresent(customAsset -> {
                 if (transaction.getName() == null || transaction.getName().isBlank()) {
                     transaction.setName(customAsset.getName());
                 }
                 if (transaction.getPriceNow() == null) {
                     transaction.setPriceNow(customAsset.getPriceNow());
                 }
-                holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
-            } else if (transaction.getAssetType() != null) {
-                holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
-            }
+            });
+        }
 
-            Map<String, Object> response = new HashMap<>();
-            response.put("save", transactionStatus);
-            return ResponseEntity.ok(response);
+        Transactions transactionStatus = transactionsRepository.save(transaction);
+        performanceService.evictRealizedPnLCache(portfolioId);
+
+        boolean holdingSynced = true;
+        if (isHoldingChange && assetType != null) {
+            try {
+                if (Assets.STOCK.equals(assetType) || Assets.CRYPTO.equals(assetType)) {
+                    // CRYPTO goes through the same market-data flow as STOCK; assetType
+                    // tells Flask to use CoinGecko even before the holding exists
+                    boolean fetched = holdingService.updateOrCreateHoldingInPortfolioUpdated(portfolioId, transaction);
+                    tickersService.saveIfNotExists(transaction.getTicker());
+                    if (!fetched) {
+                        refreshMarketData(transaction.getTicker(), assetType);
+                    }
+                } else {
+                    // CUSTOM and legacy COIN/FIGURINE/FUND
+                    holdingService.updateOrCreateCustomHoldingInPortfolio(portfolioId, transaction);
+                }
+            } catch (Exception e) {
+                // The transaction is committed; the next write to this ticker recalculates the holding.
+                holdingSynced = false;
+                log.error("Transaction {} saved but its holding update failed for {} in portfolio {}",
+                        transactionStatus.getTransactionId(), transaction.getTicker(), portfolioId, e);
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("save", transactionStatus);
+        response.put("holdingSynced", holdingSynced);
+        return ResponseEntity.ok(response);
+    }
+
+    /** Best-effort price refresh after a trade in a ticker that already has market data. */
+    private void refreshMarketData(String ticker, Assets assetType) {
+        try {
+            flaskClientService.sendSyncPostRequest(ticker, assetType.name());
         } catch (Exception e) {
-            log.error("Error creating transaction for portfolio {}", portfolioId, e);
-            throw new RuntimeException("Failed to create transaction");
+            log.warn("Market data refresh failed for {}: {}", ticker, e.getMessage());
         }
     }
 
@@ -114,7 +151,7 @@ public class TransactionController {
     public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         List<Transactions> transactions = transactionService.findAllByPortfolioId(portfolioId);
-        transactions.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency())));
+        attachFxRates(transactions);
         return transactions;
     }
 
@@ -122,8 +159,14 @@ public class TransactionController {
     public List<Transactions> getAllTransactionByPortfolioId(@PathVariable String portfolioId, @PathVariable int year, Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         List<Transactions> transactions = transactionService.findBuySellByPortfolioIdAndYear(portfolioId, year);
-        transactions.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency())));
+        attachFxRates(transactions);
         return transactions;
+    }
+
+    /** One read of the rate table for the whole list — a findById per row was N round trips. */
+    private void attachFxRates(List<Transactions> transactions) {
+        Map<String, BigDecimal> rates = fxRateService.getAllRatesAsMap();
+        transactions.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency(), rates)));
     }
 
     @PutMapping("/{portfolioId}/transactions/{transactionId}/update")
@@ -207,7 +250,7 @@ public class TransactionController {
             if (!anyHoldingChangeLeft) {
                 var holding = holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker);
                 if (holding != null) {
-                    holdingsRepository.delete(holding);
+                    holdingService.removeHolding(holding);
                 }
             } else if (assetType == null || Assets.STOCK.equals(assetType) || Assets.CRYPTO.equals(assetType)) {
                 holdingService.recalculateHoldingFromTransactions(portfolioId, ticker);

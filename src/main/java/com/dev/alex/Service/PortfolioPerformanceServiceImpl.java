@@ -46,25 +46,59 @@ public class PortfolioPerformanceServiceImpl {
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final int SCALE = 2;
 
+    /**
+     * Everything the value maths needs about one ticker the portfolio has traded — held now or
+     * sold out. Built once per request so each ticker costs one market-data read and one price
+     * series read however many days the series spans.
+     *
+     * @param market   STOCK/CRYPTO: provider prices, splits, daily history cache
+     * @param currency the currency {@code prices} and {@code currentPrice} are quoted in — the
+     *                 provider's for market tickers (may be "GBp"), the book currency for custom
+     * @param prices   dated closes (daily cache, or a custom asset's recorded history); may be empty
+     */
+    private record TickerContext(String ticker, boolean market, String currency, List<Splits> splits,
+                                 NavigableMap<LocalDate, BigDecimal> prices, BigDecimal currentPrice) {
+
+        /** Close on or before {@code date}; the current price for a custom asset with no history at all. */
+        BigDecimal priceOn(LocalDate date) {
+            if (prices.isEmpty()) return market ? null : currentPrice;
+            Map.Entry<LocalDate, BigDecimal> entry = prices.floorEntry(date);
+            return entry == null ? null : entry.getValue();
+        }
+    }
+
     public PerformanceData getPerformance(String portfolioId, String period) {
         List<Transactions> allTx = transactionsRepository.findAllByPortfolioIdOrderByDateAsc(portfolioId);
         List<Holdings> holdings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
-        Map<String, List<Splits>> splitsByTicker = loadSplits(holdings);
+        Map<String, TickerContext> contexts = loadTickerContexts(portfolioId, holdings, allTx);
 
-        BigDecimal totalInvested = calcTotalInvested(allTx);
-        BigDecimal totalDividends = calcTotalDividends(allTx);
-        BigDecimal realizedPnL = calcRealizedPnL(allTx, splitsByTicker);
+        Map<String, BigDecimal> investedByCurrency = calcTotalInvestedByCurrency(allTx);
+        Map<String, BigDecimal> dividendsByCurrency = calcTotalDividendsByCurrency(allTx);
+        // The cached figure the dashboard shows, so the two pages cannot disagree. It loads splits
+        // for every ticker ever traded; loading them from current holdings only (as this method
+        // used to) left a fully-sold split stock unadjusted.
+        Map<String, BigDecimal> realizedByCurrency = getRealizedPnLByCurrency(portfolioId);
 
-        BigDecimal currentValue = ZERO;
-        BigDecimal openCostBasis = ZERO;
+        Map<String, BigDecimal> valueByCurrency = new TreeMap<>();
+        Map<String, BigDecimal> openCostByCurrency = new TreeMap<>();
         for (Holdings h : holdings) {
-            BigDecimal price = getCurrentPrice(h);
+            TickerContext context = contexts.get(h.getTicker());
+            BigDecimal price = context != null ? context.currentPrice() : h.getPriceNow();
             if (price == null || price.compareTo(ZERO) <= 0) continue;
             BigDecimal qty = h.getQuantity() != null ? h.getQuantity() : ZERO;
-            currentValue = currentValue.add(qty.multiply(price));
             BigDecimal avgCost = h.getAveragePurchasePrice() != null ? h.getAveragePurchasePrice() : ZERO;
-            openCostBasis = openCostBasis.add(qty.multiply(avgCost));
+            // Value is in the quote currency, cost in the book currency — they differ for a coin
+            // bought in EUR (quoted in USD) and a London line (quoted in pence).
+            String quoteCurrency = context != null ? context.currency() : currencyOrUsd(h.getCurrency());
+            valueByCurrency.merge(quoteCurrency, qty.multiply(price), BigDecimal::add);
+            openCostByCurrency.merge(currencyOrUsd(h.getCurrency()), qty.multiply(avgCost), BigDecimal::add);
         }
+
+        BigDecimal totalInvested = sum(investedByCurrency);
+        BigDecimal totalDividends = sum(dividendsByCurrency);
+        BigDecimal realizedPnL = sum(realizedByCurrency);
+        BigDecimal currentValue = sum(valueByCurrency);
+        BigDecimal openCostBasis = sum(openCostByCurrency);
 
         BigDecimal unrealizedPnL = currentValue.subtract(openCostBasis);
         BigDecimal unrealizedPnLPct = openCostBasis.compareTo(ZERO) != 0
@@ -76,8 +110,9 @@ public class PortfolioPerformanceServiceImpl {
                 ? totalReturn.divide(totalInvested, 6, RoundingMode.HALF_EVEN).multiply(BigDecimal.valueOf(100))
                 : ZERO;
 
-        BigDecimal xirr = calcXirr(allTx, currentValue);
-        List<PerformancePoint> timeSeries = buildTimeSeries(portfolioId, holdings, allTx, period, splitsByTicker);
+        List<PerformanceData.CashFlow> cashFlows = cashFlows(allTx);
+        BigDecimal xirr = calcXirr(cashFlows, currentValue);
+        List<PerformancePoint> timeSeries = buildTimeSeries(contexts, allTx, period);
 
         PerformanceData data = new PerformanceData();
         data.setTotalInvested(totalInvested.setScale(SCALE, RoundingMode.HALF_EVEN));
@@ -90,26 +125,32 @@ public class PortfolioPerformanceServiceImpl {
         data.setTotalReturnPct(totalReturnPct.setScale(SCALE, RoundingMode.HALF_EVEN));
         data.setXirr(xirr);
         data.setTimeSeries(timeSeries);
+        data.setTotalInvestedByCurrency(scaled(investedByCurrency));
+        data.setCurrentValueByCurrency(scaled(valueByCurrency));
+        data.setOpenCostBasisByCurrency(scaled(openCostByCurrency));
+        data.setRealizedPnLByCurrency(scaled(realizedByCurrency));
+        data.setTotalDividendsByCurrency(scaled(dividendsByCurrency));
+        data.setCashFlows(cashFlows);
         return data;
     }
 
-    private BigDecimal calcTotalInvested(List<Transactions> txList) {
-        return txList.stream()
-                .filter(t -> t.getTransactionType() == TransactionType.BUY
-                        && t.getPrice() != null && t.getQuantity() != null)
-                .map(t -> {
-                    BigDecimal cost = t.getPrice().multiply(t.getQuantity());
-                    BigDecimal comm = t.getCommission() != null ? t.getCommission() : ZERO;
-                    return cost.add(comm);
-                })
-                .reduce(ZERO, BigDecimal::add);
+    private Map<String, BigDecimal> calcTotalInvestedByCurrency(List<Transactions> txList) {
+        Map<String, BigDecimal> out = new TreeMap<>();
+        for (Transactions t : txList) {
+            if (t.getTransactionType() != TransactionType.BUY || t.getPrice() == null || t.getQuantity() == null) continue;
+            BigDecimal comm = t.getCommission() != null ? t.getCommission() : ZERO;
+            out.merge(currencyOrUsd(t.getCurrency()), t.getPrice().multiply(t.getQuantity()).add(comm), BigDecimal::add);
+        }
+        return out;
     }
 
-    private BigDecimal calcTotalDividends(List<Transactions> txList) {
-        return txList.stream()
-                .filter(t -> t.getTransactionType() == TransactionType.DIVIDEND && t.getAmount() != null)
-                .map(Transactions::getAmount)
-                .reduce(ZERO, BigDecimal::add);
+    private Map<String, BigDecimal> calcTotalDividendsByCurrency(List<Transactions> txList) {
+        Map<String, BigDecimal> out = new TreeMap<>();
+        for (Transactions t : txList) {
+            if (t.getTransactionType() != TransactionType.DIVIDEND || t.getAmount() == null) continue;
+            out.merge(currencyOrUsd(t.getCurrency()), t.getAmount(), BigDecimal::add);
+        }
+        return out;
     }
 
     /** FIFO buy lot; qty/price stay in the lot's own date basis, split-adjusted at match time. */
@@ -125,12 +166,6 @@ public class PortfolioPerformanceServiceImpl {
             this.commPerShare = commPerShare;
             this.date = date;
         }
-    }
-
-    private BigDecimal calcRealizedPnL(List<Transactions> txList, Map<String, List<Splits>> splitsByTicker) {
-        // sum of per-currency gains — regrouped but unrounded, so identical to the old single accumulator
-        return calcRealizedPnLByCurrency(txList, splitsByTicker).values().stream()
-                .reduce(ZERO, BigDecimal::add);
     }
 
     /**
@@ -249,39 +284,33 @@ public class PortfolioPerformanceServiceImpl {
         return tx.getCommission().divide(tx.getQuantity(), 8, RoundingMode.HALF_EVEN);
     }
 
-    private BigDecimal getCurrentPrice(Holdings h) {
-        if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) {
-            MarketData md = marketDataService.getMarketDataByTicker(h.getTicker());
-            return md != null ? md.getPrice() : null;
-        }
-        return h.getPriceNow();
-    }
-
-    private BigDecimal calcXirr(List<Transactions> txList, BigDecimal currentValue) {
-        List<double[]> flows = new ArrayList<>();
-
+    /** BUY out, SELL and DIVIDEND in — as booked, in each transaction's own currency. */
+    private List<PerformanceData.CashFlow> cashFlows(List<Transactions> txList) {
+        List<PerformanceData.CashFlow> flows = new ArrayList<>();
         for (Transactions tx : txList) {
             if (tx.getDate() == null) continue;
-            double dayEpoch = tx.getDate().toEpochDay();
-
-            if (tx.getTransactionType() == TransactionType.BUY
-                    && tx.getPrice() != null && tx.getQuantity() != null) {
-                BigDecimal comm = tx.getCommission() != null ? tx.getCommission() : ZERO;
-                double amount = -(tx.getPrice().multiply(tx.getQuantity()).add(comm)).doubleValue();
-                flows.add(new double[]{dayEpoch, amount});
-
-            } else if (tx.getTransactionType() == TransactionType.SELL
-                    && tx.getPrice() != null && tx.getQuantity() != null) {
-                BigDecimal comm = tx.getCommission() != null ? tx.getCommission() : ZERO;
-                double amount = tx.getPrice().multiply(tx.getQuantity()).subtract(comm).doubleValue();
-                flows.add(new double[]{dayEpoch, amount});
-
+            String currency = currencyOrUsd(tx.getCurrency());
+            BigDecimal comm = tx.getCommission() != null ? tx.getCommission() : ZERO;
+            if (tx.getTransactionType() == TransactionType.BUY && tx.getPrice() != null && tx.getQuantity() != null) {
+                flows.add(new PerformanceData.CashFlow(tx.getDate(),
+                        tx.getPrice().multiply(tx.getQuantity()).add(comm).negate(), currency));
+            } else if (tx.getTransactionType() == TransactionType.SELL && tx.getPrice() != null && tx.getQuantity() != null) {
+                flows.add(new PerformanceData.CashFlow(tx.getDate(),
+                        tx.getPrice().multiply(tx.getQuantity()).subtract(comm), currency));
             } else if (tx.getTransactionType() == TransactionType.DIVIDEND && tx.getAmount() != null) {
-                flows.add(new double[]{dayEpoch, tx.getAmount().doubleValue()});
+                flows.add(new PerformanceData.CashFlow(tx.getDate(), tx.getAmount(), currency));
             }
         }
+        return flows;
+    }
 
-        if (flows.isEmpty()) return ZERO;
+    /** Money-weighted return over native amounts summed without FX — exact for one currency only. */
+    private BigDecimal calcXirr(List<PerformanceData.CashFlow> cashFlows, BigDecimal currentValue) {
+        if (cashFlows.isEmpty()) return ZERO;
+        List<double[]> flows = new ArrayList<>();
+        for (PerformanceData.CashFlow cf : cashFlows) {
+            flows.add(new double[]{cf.date().toEpochDay(), cf.amount().doubleValue()});
+        }
         flows.add(new double[]{LocalDate.now().toEpochDay(), currentValue.doubleValue()});
 
         double t0 = flows.get(0)[0];
@@ -304,68 +333,109 @@ public class PortfolioPerformanceServiceImpl {
         return BigDecimal.valueOf(r * 100).setScale(SCALE, RoundingMode.HALF_EVEN);
     }
 
-    private List<PerformancePoint> buildTimeSeries(String portfolioId, List<Holdings> holdings,
-                                                    List<Transactions> allTx, String period,
-                                                    Map<String, List<Splits>> splitsByTicker) {
-        LocalDate endDate = LocalDate.now();
-        LocalDate startDate = resolveStartDate(period, endDate, allTx);
-
-        // Load price history for stock-type holdings
-        Map<String, Map<LocalDate, BigDecimal>> stockPrices = new HashMap<>();
+    /**
+     * One context per ticker the portfolio holds or has ever bought or sold. A sold-out position
+     * still held value on the days before its sale; building the series from current holdings
+     * alone dropped it from every past point.
+     */
+    private Map<String, TickerContext> loadTickerContexts(String portfolioId, List<Holdings> holdings,
+                                                         List<Transactions> allTx) {
+        Map<String, Holdings> holdingByTicker = new HashMap<>();
         for (Holdings h : holdings) {
-            if (h.getAssetType() != Assets.STOCK && h.getAssetType() != Assets.CRYPTO) continue;
-            String ticker = h.getTicker();
-            PriceHistoryCache cache = priceHistoryCacheRepository.findDailyById(ticker).orElse(null);
-            if (cache != null && cache.getHistory() != null) {
-                Map<LocalDate, BigDecimal> priceMap = cache.getHistory().stream()
-                        .collect(Collectors.toMap(PriceHistoryEntry::getDate, PriceHistoryEntry::getPrice,
-                                (a, b) -> b));
-                stockPrices.put(ticker, priceMap);
+            if (h.getTicker() != null) holdingByTicker.put(h.getTicker(), h);
+        }
+        Map<String, List<Transactions>> tradesByTicker = new LinkedHashMap<>();
+        for (Transactions tx : allTx) {
+            if (tx.getTicker() == null) continue;
+            if (tx.getTransactionType() != TransactionType.BUY && tx.getTransactionType() != TransactionType.SELL) continue;
+            tradesByTicker.computeIfAbsent(tx.getTicker(), k -> new ArrayList<>()).add(tx);
+        }
+        Set<String> tickers = new LinkedHashSet<>(holdingByTicker.keySet());
+        tickers.addAll(tradesByTicker.keySet());
+
+        Map<String, TickerContext> contexts = new LinkedHashMap<>();
+        for (String ticker : tickers) {
+            Holdings holding = holdingByTicker.get(ticker);
+            List<Transactions> trades = tradesByTicker.getOrDefault(ticker, List.of());
+            Assets assetType = holding != null && holding.getAssetType() != null
+                    ? holding.getAssetType()
+                    : trades.stream().map(Transactions::getAssetType).filter(Objects::nonNull)
+                            .reduce((first, second) -> second).orElse(null);
+            boolean market = assetType == Assets.STOCK || assetType == Assets.CRYPTO;
+            String bookCurrency = holding != null && holding.getCurrency() != null
+                    ? holding.getCurrency()
+                    : trades.stream().map(Transactions::getCurrency).filter(Objects::nonNull).findFirst().orElse(null);
+
+            // Custom assets keep a stub marketData doc whose price the custom-asset endpoints
+            // update, so it is the current price for both kinds. Holdings.priceNow is only the
+            // fallback: it used to be set once, at creation, and never refreshed.
+            MarketData md = marketDataService.getMarketDataByTicker(ticker);
+            BigDecimal currentPrice = md != null && md.getPrice() != null ? md.getPrice()
+                    : holding != null ? holding.getPriceNow() : null;
+
+            NavigableMap<LocalDate, BigDecimal> prices = new TreeMap<>();
+            if (market) {
+                PriceHistoryCache cache = priceHistoryCacheRepository.findDailyById(ticker).orElse(null);
+                if (cache != null && cache.getHistory() != null) putAll(prices, cache.getHistory());
+                List<Splits> splits = md != null && md.getSplits() != null && !md.getSplits().isEmpty()
+                        ? md.getSplits() : null;
+                String currency = md != null && md.getCurrency() != null ? md.getCurrency() : currencyOrUsd(bookCurrency);
+                contexts.put(ticker, new TickerContext(ticker, true, currency, splits, prices, currentPrice));
+            } else {
+                CustomAsset asset = customAssetRepository.findByPortfolioIdAndTicker(portfolioId, ticker).orElse(null);
+                if (asset != null && asset.getPriceHistory() != null) putAll(prices, asset.getPriceHistory());
+                if (currentPrice == null && asset != null) currentPrice = asset.getPriceNow();
+                contexts.put(ticker, new TickerContext(ticker, false, currencyOrUsd(bookCurrency), null, prices, currentPrice));
             }
         }
+        return contexts;
+    }
 
-        // Flat price for non-stock holdings (use current priceNow)
-        Map<String, BigDecimal> flatPrices = new HashMap<>();
-        for (Holdings h : holdings) {
-            if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) continue;
-            if (h.getPriceNow() != null) flatPrices.put(h.getTicker(), h.getPriceNow());
+    private static void putAll(NavigableMap<LocalDate, BigDecimal> target, List<PriceHistoryEntry> entries) {
+        for (PriceHistoryEntry entry : entries) {
+            if (entry != null && entry.getDate() != null && entry.getPrice() != null) {
+                target.put(entry.getDate(), entry.getPrice());
+            }
         }
+    }
 
-        // Group transactions by ticker for quantity replay
-        Map<String, List<Transactions>> txByTicker = allTx.stream()
-                .filter(t -> t.getTicker() != null)
-                .collect(Collectors.groupingBy(Transactions::getTicker));
-
-        // Values stay in each ticker's quote currency — the client converts.
-        Map<String, String> tickerCurrency = nativeCurrencyByTicker(holdings, null);
+    private List<PerformancePoint> buildTimeSeries(Map<String, TickerContext> contexts,
+                                                    List<Transactions> allTx, String period) {
+        LocalDate endDate = LocalDate.now();
+        LocalDate startDate = resolveStartDate(period, endDate, allTx);
+        Map<String, List<Transactions>> txByTicker = groupByTicker(allTx);
 
         List<PerformancePoint> points = new ArrayList<>();
         LocalDate current = startDate;
         while (!current.isAfter(endDate)) {
-            Map<String, BigDecimal> byCurrency = new LinkedHashMap<>();
-            for (Holdings h : holdings) {
-                String ticker = h.getTicker();
-                BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), current,
-                        splitsByTicker.get(ticker));
-                if (qty.compareTo(ZERO) <= 0) continue;
-
-                BigDecimal price;
-                if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) {
-                    price = priceOnOrBefore(stockPrices.get(ticker), current);
-                } else {
-                    price = flatPrices.get(ticker);
-                }
-                if (price != null && price.compareTo(ZERO) > 0) {
-                    byCurrency.merge(tickerCurrency.getOrDefault(ticker, "USD"), qty.multiply(price), BigDecimal::add);
-                }
-            }
-            byCurrency.replaceAll((c, v) -> v.setScale(SCALE, RoundingMode.HALF_EVEN));
-            BigDecimal nativeSum = byCurrency.values().stream().reduce(ZERO, BigDecimal::add);
-            points.add(new PerformancePoint(current, nativeSum.setScale(SCALE, RoundingMode.HALF_EVEN), byCurrency));
+            points.add(valueOn(current, contexts, txByTicker));
             current = current.plusDays(1);
         }
-
         return downsample(points, 200);
+    }
+
+    /** Portfolio value on one day, per quote currency — the client converts. */
+    private PerformancePoint valueOn(LocalDate date, Map<String, TickerContext> contexts,
+                                     Map<String, List<Transactions>> txByTicker) {
+        Map<String, BigDecimal> byCurrency = new LinkedHashMap<>();
+        for (TickerContext context : contexts.values()) {
+            BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(context.ticker(), List.of()), date,
+                    context.splits());
+            if (qty.compareTo(ZERO) <= 0) continue;
+            BigDecimal price = context.priceOn(date);
+            if (price != null && price.compareTo(ZERO) > 0) {
+                byCurrency.merge(context.currency(), qty.multiply(price), BigDecimal::add);
+            }
+        }
+        byCurrency.replaceAll((c, v) -> v.setScale(SCALE, RoundingMode.HALF_EVEN));
+        BigDecimal nativeSum = byCurrency.values().stream().reduce(ZERO, BigDecimal::add);
+        return new PerformancePoint(date, nativeSum.setScale(SCALE, RoundingMode.HALF_EVEN), byCurrency);
+    }
+
+    private static Map<String, List<Transactions>> groupByTicker(List<Transactions> allTx) {
+        return allTx.stream()
+                .filter(t -> t.getTicker() != null)
+                .collect(Collectors.groupingBy(Transactions::getTicker));
     }
 
     private BigDecimal quantityAtDate(List<Transactions> txForTicker, LocalDate date, List<Splits> splits) {
@@ -397,29 +467,9 @@ public class PortfolioPerformanceServiceImpl {
         return f;
     }
 
-    private Map<String, List<Splits>> loadSplits(List<Holdings> holdings) {
-        Map<String, List<Splits>> map = new HashMap<>();
-        for (Holdings h : holdings) {
-            if (h.getAssetType() != Assets.STOCK && h.getAssetType() != Assets.CRYPTO) continue;
-            MarketData md = marketDataService.getMarketDataByTicker(h.getTicker());
-            if (md != null && md.getSplits() != null && !md.getSplits().isEmpty()) {
-                map.put(h.getTicker(), md.getSplits());
-            }
-        }
-        return map;
-    }
-
-    private BigDecimal priceOnOrBefore(Map<LocalDate, BigDecimal> priceMap, LocalDate date) {
-        if (priceMap == null || priceMap.isEmpty()) return null;
-        LocalDate best = null;
-        for (LocalDate d : priceMap.keySet()) {
-            if (!d.isAfter(date) && (best == null || d.isAfter(best))) best = d;
-        }
-        return best != null ? priceMap.get(best) : null;
-    }
-
     private LocalDate resolveStartDate(String period, LocalDate end, List<Transactions> allTx) {
-        return switch (period.toUpperCase()) {
+        String key = period == null ? "ALL" : period.toUpperCase();
+        return switch (key) {
             case "1W" -> end.minusWeeks(1);
             case "1M" -> end.minusMonths(1);
             case "3M" -> end.minusMonths(3);
@@ -443,52 +493,22 @@ public class PortfolioPerformanceServiceImpl {
         return result;
     }
 
+    /**
+     * Month-end portfolio value from the first transaction to today, per quote currency.
+     * Stock/crypto prices are in MarketData currency (e.g. GBp pence), custom assets in their
+     * holding currency; no FX is applied — the client converts with the rates it holds.
+     */
     public List<PerformancePoint> getMonthlyHistory(String portfolioId) {
         List<Transactions> allTx = transactionsRepository.findAllByPortfolioIdOrderByDateAsc(portfolioId);
         List<Holdings> holdings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
-
-        // Stock/crypto price history from cache
-        Map<String, Map<LocalDate, BigDecimal>> stockPrices = new HashMap<>();
-        for (Holdings h : holdings) {
-            if (h.getAssetType() != Assets.STOCK && h.getAssetType() != Assets.CRYPTO) continue;
-            PriceHistoryCache cache = priceHistoryCacheRepository.findDailyById(h.getTicker()).orElse(null);
-            if (cache != null && cache.getHistory() != null) {
-                Map<LocalDate, BigDecimal> priceMap = cache.getHistory().stream()
-                        .collect(Collectors.toMap(PriceHistoryEntry::getDate, PriceHistoryEntry::getPrice, (a, b) -> b));
-                stockPrices.put(h.getTicker(), priceMap);
-            }
-        }
-
-        // Custom asset price history from embedded priceHistory list
-        Map<String, Map<LocalDate, BigDecimal>> customPrices = new HashMap<>();
-        for (Holdings h : holdings) {
-            if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) continue;
-            CustomAsset ca = customAssetRepository.findByPortfolioIdAndTicker(portfolioId, h.getTicker()).orElse(null);
-            if (ca != null && ca.getPriceHistory() != null && !ca.getPriceHistory().isEmpty()) {
-                Map<LocalDate, BigDecimal> priceMap = ca.getPriceHistory().stream()
-                        .collect(Collectors.toMap(PriceHistoryEntry::getDate, PriceHistoryEntry::getPrice, (a, b) -> b));
-                customPrices.put(h.getTicker(), priceMap);
-            } else if (h.getPriceNow() != null) {
-                // Fall back to flat current price if no history recorded yet
-                customPrices.put(h.getTicker(), Map.of(LocalDate.now(), h.getPriceNow()));
-            }
-        }
-
-        Map<String, List<Transactions>> txByTicker = allTx.stream()
-                .filter(t -> t.getTicker() != null)
-                .collect(Collectors.groupingBy(Transactions::getTicker));
+        Map<String, TickerContext> contexts = loadTickerContexts(portfolioId, holdings, allTx);
+        Map<String, List<Transactions>> txByTicker = groupByTicker(allTx);
 
         LocalDate firstTxDate = allTx.stream()
                 .map(Transactions::getDate)
                 .filter(Objects::nonNull)
                 .min(LocalDate::compareTo)
                 .orElse(LocalDate.now());
-
-        // Per-ticker native currency — prices are quoted in it and stay in it.
-        // Stock/crypto prices are in MarketData currency (e.g. GBp pence); custom in holding currency.
-        // No FX is applied here: the client converts with the rates it holds.
-        Map<String, List<Splits>> splitsByTicker = new HashMap<>();
-        Map<String, String> tickerCurrency = nativeCurrencyByTicker(holdings, splitsByTicker);
 
         YearMonth startMonth = YearMonth.from(firstTxDate);
         YearMonth endMonth = YearMonth.now();
@@ -499,54 +519,24 @@ public class PortfolioPerformanceServiceImpl {
             LocalDate date = current.equals(endMonth)
                     ? LocalDate.now()
                     : current.atEndOfMonth();
-
-            Map<String, BigDecimal> byCurrency = new LinkedHashMap<>();
-            for (Holdings h : holdings) {
-                String ticker = h.getTicker();
-                BigDecimal qty = quantityAtDate(txByTicker.getOrDefault(ticker, List.of()), date,
-                        splitsByTicker.get(ticker));
-                if (qty.compareTo(ZERO) <= 0) continue;
-
-                Map<LocalDate, BigDecimal> priceMap = (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO)
-                        ? stockPrices.get(ticker)
-                        : customPrices.get(ticker);
-
-                BigDecimal price = priceOnOrBefore(priceMap, date);
-                if (price != null && price.compareTo(ZERO) > 0) {
-                    String ccy = tickerCurrency.getOrDefault(ticker, "USD");
-                    byCurrency.merge(ccy, qty.multiply(price), BigDecimal::add);
-                }
-            }
-            byCurrency.replaceAll((c, v) -> v.setScale(SCALE, RoundingMode.HALF_EVEN));
-            BigDecimal nativeSum = byCurrency.values().stream().reduce(ZERO, BigDecimal::add);
-            result.add(new PerformancePoint(date, nativeSum.setScale(SCALE, RoundingMode.HALF_EVEN), byCurrency));
+            result.add(valueOn(date, contexts, txByTicker));
             current = current.plusMonths(1);
         }
         return result;
     }
 
-    /**
-     * Ticker → the currency its price is quoted in (MarketData currency for
-     * stock/crypto, holding currency otherwise). Fills {@code splitsSink} with
-     * each ticker's splits along the way so callers need only one MarketData read.
-     */
-    private Map<String, String> nativeCurrencyByTicker(List<Holdings> holdings,
-                                                       Map<String, List<Splits>> splitsSink) {
-        Map<String, String> currencies = new HashMap<>();
-        for (Holdings h : holdings) {
-            String ccy;
-            if (h.getAssetType() == Assets.STOCK || h.getAssetType() == Assets.CRYPTO) {
-                MarketData md = marketDataService.getMarketDataByTicker(h.getTicker());
-                ccy = (md != null && md.getCurrency() != null) ? md.getCurrency() : h.getCurrency();
-                if (splitsSink != null && md != null && md.getSplits() != null && !md.getSplits().isEmpty()) {
-                    splitsSink.put(h.getTicker(), md.getSplits());
-                }
-            } else {
-                ccy = h.getCurrency();
-            }
-            currencies.put(h.getTicker(), ccy != null ? ccy : "USD");
-        }
-        return currencies;
+    private static BigDecimal sum(Map<String, BigDecimal> byCurrency) {
+        return byCurrency.values().stream().reduce(ZERO, BigDecimal::add);
+    }
+
+    private static Map<String, BigDecimal> scaled(Map<String, BigDecimal> byCurrency) {
+        Map<String, BigDecimal> out = new TreeMap<>();
+        byCurrency.forEach((c, v) -> out.put(c, v.setScale(SCALE, RoundingMode.HALF_EVEN)));
+        return out;
+    }
+
+    private static String currencyOrUsd(String currency) {
+        return currency == null || currency.isBlank() ? "USD" : currency;
     }
 
     /** GBp/GBx pence collapse to GBP for display-currency purposes. */

@@ -13,6 +13,7 @@ import com.dev.alex.Model.Transactions;
 import com.dev.alex.Service.Ai.AiEnvelopeService;
 import com.dev.alex.Service.Ai.AiPortfolioAssembler;
 import com.dev.alex.Service.FxRateServiceImpl;
+import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.PortfolioAccessService;
 import com.dev.alex.Service.TransactionServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,8 +25,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Portfolio-level AI endpoints: what is held, what it cost, what it is worth.
@@ -47,6 +50,8 @@ public class AiPortfolioController {
     private TransactionServiceImpl transactionService;
     @Autowired
     private FxRateServiceImpl fxRateService;
+    @Autowired
+    private HoldingServiceImpl holdingService;
 
     @Operation(summary = "List portfolios",
             description = "Every portfolio the caller owns, with position count, the currencies its "
@@ -68,7 +73,7 @@ public class AiPortfolioController {
         AiSnapshot snapshot = assembler.snapshot(portfolioId, username);
         return envelopeService.wrap(snapshot,
                 baseCurrency(username, portfolioId, snapshot.positions()),
-                AiEnvelopeService.NOTE_CASH_BALANCE);
+                AiEnvelopeService.NOTE_CASH_BALANCE, AiEnvelopeService.NOTE_POSITION_CURRENCIES);
     }
 
     @Operation(summary = "Positions only",
@@ -78,7 +83,8 @@ public class AiPortfolioController {
         String username = authentication.getName();
         portfolioAccessService.assertOwnership(portfolioId, username);
         List<AiPosition> positions = assembler.positions(portfolioId, username);
-        return envelopeService.wrap(positions, baseCurrency(username, portfolioId, positions));
+        return envelopeService.wrap(positions, baseCurrency(username, portfolioId, positions),
+                AiEnvelopeService.NOTE_POSITION_CURRENCIES);
     }
 
     @Operation(summary = "Allocation targets",
@@ -94,7 +100,7 @@ public class AiPortfolioController {
         List<AiPosition> positions = assembler.positions(portfolioId, username);
         String base = baseCurrency(username, portfolioId, positions);
         return envelopeService.wrap(assembler.allocationTargets(portfolioId, username, positions, base),
-                base, AiEnvelopeService.NOTE_ALLOCATION_TARGETS);
+                base, AiEnvelopeService.NOTE_ALLOCATION_TARGETS, AiEnvelopeService.NOTE_POSITION_CURRENCIES);
     }
 
     @Operation(summary = "Portfolio breakdown",
@@ -105,7 +111,7 @@ public class AiPortfolioController {
         portfolioAccessService.assertOwnership(portfolioId, username);
         List<AiPosition> positions = assembler.positions(portfolioId, username);
         return envelopeService.wrap(assembler.diversification(positions),
-                baseCurrency(username, portfolioId, positions));
+                baseCurrency(username, portfolioId, positions), AiEnvelopeService.NOTE_POSITION_CURRENCIES);
     }
 
     @Operation(summary = "Holdings grouped by tag",
@@ -116,7 +122,7 @@ public class AiPortfolioController {
         portfolioAccessService.assertOwnership(portfolioId, username);
         List<AiPosition> positions = assembler.positions(portfolioId, username);
         return envelopeService.wrap(assembler.tagGroups(positions),
-                baseCurrency(username, portfolioId, positions));
+                baseCurrency(username, portfolioId, positions), AiEnvelopeService.NOTE_POSITION_CURRENCIES);
     }
 
     @Operation(summary = "Transactions",
@@ -151,10 +157,17 @@ public class AiPortfolioController {
         int from = Math.min(safeOffset, matching.size());
         int to = Math.min(from + safeLimit, matching.size());
         List<Transactions> page = matching.subList(from, to);
-        page.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency())));
+        // one rate read for the page, not one findById per row
+        Map<String, BigDecimal> rates = fxRateService.getAllRatesAsMap();
+        page.forEach(t -> t.setFxRate(fxRateService.getRateForCurrency(t.getCurrency(), rates)));
 
+        // Same held-currency rule the other portfolio endpoints use; passing none made every
+        // unconfigured portfolio report USD here, even an all-EUR one.
+        List<String> heldCurrencies = holdingService.getAllHoldingsByPortfolioId(portfolioId).stream()
+                .map(h -> h.getCurrency() == null || h.getCurrency().isBlank() ? "USD" : h.getCurrency())
+                .toList();
         AiTransactionsPage payload = new AiTransactionsPage(matching.size(), safeOffset, safeLimit, page);
-        return envelopeService.wrap(payload, envelopeService.baseCurrency(username, portfolioId, null));
+        return envelopeService.wrap(payload, envelopeService.baseCurrency(username, portfolioId, heldCurrencies));
     }
 
     private static TransactionType parseType(String type) {

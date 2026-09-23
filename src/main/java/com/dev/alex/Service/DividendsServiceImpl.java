@@ -161,10 +161,12 @@ public class DividendsServiceImpl implements DividendsService {
                 tickerNativeCurrency.put(ticker, nativeCurrency);
                 marketCurrencies.add(normalizeCurrency(nativeCurrency));
 
-                // Get splits, ensure non-null, AND SORT THEM BY DATE
-                List<Splits> tickerSplits = (marketData.getSplits() == null) ? new ArrayList<>()
-                        : new ArrayList<>(marketData.getSplits());
-                tickerSplits.sort(Comparator.comparing(Splits::getSplitDate)); // ESSENTIAL
+                // Undated splits are dropped: a null date cannot be placed before or after a trade
+                List<Splits> tickerSplits = marketData.getSplits() == null ? new ArrayList<>()
+                        : marketData.getSplits().stream()
+                                .filter(s -> s != null && s.getSplitDate() != null)
+                                .sorted(Comparator.comparing(Splits::getSplitDate))
+                                .collect(Collectors.toList());
                 marketSplitsByTicker.put(ticker, tickerSplits);
 
                 // Total received dividends for this stock in its native currency
