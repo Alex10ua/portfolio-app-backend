@@ -76,7 +76,7 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                 String monthName = dividend.getDividendDate().getMonth().toString();
                                 dividendByMonth.computeIfAbsent(monthName, m -> new ArrayList<>())
                                                 .add(new DividendsCalendarData(
-                                                                ticker, dividend.getDividendAmount(), quantity));
+                                                                ticker, dividend.getDividendAmount(), quantity, true));
                         }
                 }
                 return dividendByMonth.entrySet().stream()
@@ -96,10 +96,11 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
          * Settled from history wherever history exists: every dividend the ticker
          * declared for that year, valued on the shares actually held on its ex-date,
          * so a position built up or sold during the year is counted as it was and
-         * not as it is now. The current year carries a scheduled leg for the months
-         * ahead that nothing has been declared for — those repeat last year's
-         * payment pattern against today's holding, which is what the un-yeared
-         * projection does for all twelve months.
+         * not as it is now. The current year carries a scheduled leg for this month
+         * and the months ahead, wherever nothing has been declared yet — those repeat
+         * last year's payment pattern against today's holding, which is what the
+         * un-yeared projection does for all twelve months. Scheduled entries carry
+         * {@code scheduled = true}.
          *
          * <p>
          * A future year is scheduled end to end: nothing of it has happened, so
@@ -178,14 +179,17 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                 }
                                 byMonth.computeIfAbsent(date.getMonth(), m -> new ArrayList<>())
                                                 .add(new DividendsCalendarData(ticker, dividend.getDividendAmount(),
-                                                                shares));
+                                                                shares, false));
                                 booked.add(date.getMonth());
                         }
 
                         // scheduled leg - fills the months nothing was declared for yet.
-                        // The current year fills only the months still ahead; a future year
-                        // has none behind it, so all twelve are open. A closed year is
-                        // history and gets no projection.
+                        // The current year fills this month and the ones ahead: Yahoo lists
+                        // a dividend only once its ex-date has passed, so a payment due
+                        // later this month is not declared yet and would otherwise vanish
+                        // from the month it lands in. A future year has nothing behind it,
+                        // so all twelve are open. A closed year is history and gets no
+                        // projection.
                         if (!isCurrentYear && !isFutureYear) {
                                 continue;
                         }
@@ -199,12 +203,14 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                         for (Dividend dividend : template) {
                                 Month month = dividend.getDividendDate().getMonth();
                                 if (booked.contains(month)
-                                                || (isCurrentYear && month.getValue() <= today.getMonthValue())) {
+                                                || (isCurrentYear && (month.getValue() < today.getMonthValue()
+                                                                || paidNear(dividends,
+                                                                                dividend.getDividendDate().withYear(year))))) {
                                         continue;
                                 }
                                 byMonth.computeIfAbsent(month, m -> new ArrayList<>())
                                                 .add(new DividendsCalendarData(ticker, dividend.getDividendAmount(),
-                                                                quantity));
+                                                                quantity, true));
                                 booked.add(month);
                         }
                 }
@@ -241,6 +247,25 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                                         .isAfter(kept.getDividendDate()) ? candidate : kept);
                 }
                 return latest.values();
+        }
+
+        /** How far an ex-date may drift year to year and still be the same payment. */
+        private static final int DRIFT_DAYS = 14;
+
+        /**
+         * Whether a payment the template expects on {@code expected} has already
+         * been declared, possibly in the neighbouring month.
+         *
+         * <p>
+         * {@code booked} only knows calendar months. An ex-date that drifted from
+         * the 1st of October last year to the 30th of September this year is
+         * declared under September, so October would still look open and the
+         * same payment would be scheduled a second time. Half a month is the most
+         * the window can be: a monthly payer's next payment is ~30 days off.
+         */
+        private static boolean paidNear(List<Dividend> dividends, LocalDate expected) {
+                return dividends.stream().anyMatch(d -> Math.abs(
+                                d.getDividendDate().toEpochDay() - expected.toEpochDay()) <= DRIFT_DAYS);
         }
 
         /**

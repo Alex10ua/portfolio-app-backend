@@ -79,6 +79,14 @@ public class FlaskClientService {
     }
 
     /**
+     * Refresh the ticker's Yahoo financial statements (yahooFinancials) regardless of
+     * age. 5 Yahoo requests plus a cached .info on the Flask side — seconds, not minutes.
+     */
+    public ResponseEntity<String> refreshFinancials(String ticker) {
+        return postTicker("/update/financials", ticker, DEFAULT_TIMEOUT);
+    }
+
+    /**
      * Full update for one ticker: market data, dividends, splits, statistics and
      * both price series in a single provider call. Used when a ticker is watched
      * but not held, so nothing has ever fetched it.

@@ -27,6 +27,11 @@ public class MarketStatistics {
     // Fiscal year
     private LocalDate fiscalYearEnd;
     private LocalDate mostRecentQuarter;
+    /**
+     * Currency of the statement figures (revenue, grossProfit, ebitda, cash flow,
+     * totalCash, ...). Not the quote currency: ULVR.L is quoted in GBp and reports in EUR.
+     */
+    private String financialCurrency;
 
     // Profitability
     private BigDecimal profitMargin;

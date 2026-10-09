@@ -3,6 +3,8 @@ package com.dev.alex.Controller;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.MarketStatistics;
 import com.dev.alex.Model.NonDbModel.TickerHistoricalData;
+import com.dev.alex.Model.YahooFinancials;
+import com.dev.alex.Repository.YahooFinancialsRepository;
 import com.dev.alex.Service.MarketDataServiceImpl;
 import com.dev.alex.Service.WebCalls.FlaskClientService;
 
@@ -25,6 +27,8 @@ public class MarketDataController {
     private MarketDataServiceImpl marketDataService;
     @Autowired
     private FlaskClientService flaskClientService;
+    @Autowired
+    private YahooFinancialsRepository yahooFinancialsRepository;
 
     @GetMapping("/market-data/{ticker}")
     public ResponseEntity<MarketData> getMarketDataByTicker(@PathVariable String ticker) {
@@ -53,6 +57,34 @@ public class MarketDataController {
         return stats != null
                 ? ResponseEntity.ok(stats)
                 : ResponseEntity.ok(Map.of("status", "no_data", "ticker", upperTicker));
+    }
+
+    /**
+     * Yahoo financial statements (income, balance sheet, cash flow — annual + TTM), every
+     * line item, in the company's reporting currency. 404 until a Yahoo update has stored them.
+     */
+    @GetMapping("/market-data/{ticker}/financials")
+    public ResponseEntity<YahooFinancials> getFinancials(@PathVariable String ticker) {
+        return yahooFinancialsRepository.findById(ticker.toUpperCase())
+                .filter(f -> f.getUpdatedAt() != null)   // a checkedAt-only doc holds no statements
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** On-demand statements refresh: Flask fetches from Yahoo synchronously, then we re-read Mongo. */
+    @PostMapping("/market-data/{ticker}/financials/refresh")
+    public ResponseEntity<?> refreshFinancials(@PathVariable String ticker) {
+        String upperTicker = ticker.toUpperCase();
+        try {
+            flaskClientService.refreshFinancials(upperTicker);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("error", "Fetch from Yahoo Finance failed: " + e.getMessage()));
+        }
+        return yahooFinancialsRepository.findById(upperTicker)
+                .filter(f -> f.getUpdatedAt() != null)   // a checkedAt-only doc holds no statements
+                .<ResponseEntity<?>>map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.ok(Map.of("status", "no_data", "ticker", upperTicker)));
     }
 
     /** Dividend progression, splits and share-count series for the Historical page. */
