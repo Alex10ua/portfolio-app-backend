@@ -131,7 +131,7 @@ public class AiTickerAssembler {
         if (dividends == null || dividends.isEmpty()) return List.of();
 
         Map<Integer, BigDecimal> totals = new TreeMap<>();
-        Map<Integer, Integer> counts = new TreeMap<>();
+        TreeMap<Integer, Integer> counts = new TreeMap<>();
         for (Dividend d : dividends) {
             if (d.getDividendDate() == null || d.getDividendAmount() == null) continue;
             int year = d.getDividendDate().getYear();
@@ -140,8 +140,8 @@ public class AiTickerAssembler {
         }
         if (totals.isEmpty()) return List.of();
 
-        int cadence = counts.values().stream().mapToInt(Integer::intValue).max().orElse(1);
         int currentYear = LocalDate.now().getYear();
+        int cadence = usualCadence(counts, currentYear);
 
         List<AiTickerHistorical.DividendYear> out = new ArrayList<>();
         BigDecimal previousFull = null;
@@ -159,6 +159,39 @@ public class AiTickerAssembler {
             if (!partial) previousFull = e.getValue();
         }
         return out;
+    }
+
+    /** Finished years that vote on the usual payment count — see {@link #usualCadence}. */
+    static final int CADENCE_WINDOW_YEARS = 5;
+
+    /**
+     * The ticker's usual payments per year: the most common count among the last
+     * {@link #CADENCE_WINDOW_YEARS} finished years (the running year never votes),
+     * a tie going to the higher count. Not the maximum — one stray extra payment
+     * (KO's 2001 holds a fifth, a pre-split duplicate from Yahoo) made every normal
+     * year read as short, so all of them went partial and the streak read 0.
+     * Same rule as the Historical page's {@code usualCadence}.
+     */
+    static int usualCadence(TreeMap<Integer, Integer> counts, int currentYear) {
+        List<Integer> votes = new ArrayList<>();
+        for (int c : counts.headMap(currentYear, false).descendingMap().values()) {
+            if (votes.size() == CADENCE_WINDOW_YEARS) break;
+            votes.add(c);
+        }
+        if (votes.isEmpty()) votes.addAll(counts.values());
+
+        TreeMap<Integer, Integer> tally = new TreeMap<>();
+        for (int c : votes) tally.merge(c, 1, Integer::sum);
+        int cadence = 1;
+        int most = 0;
+        // ascending by count, so >= hands a tie to the higher one
+        for (Map.Entry<Integer, Integer> e : tally.entrySet()) {
+            if (e.getValue() >= most) {
+                cadence = e.getKey();
+                most = e.getValue();
+            }
+        }
+        return cadence;
     }
 
     /** Consecutive complete years of growth, counted back from the most recent complete year. */
