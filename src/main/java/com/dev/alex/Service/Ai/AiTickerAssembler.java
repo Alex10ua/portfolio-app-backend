@@ -162,7 +162,7 @@ public class AiTickerAssembler {
     }
 
     /** Finished years that vote on the usual payment count — see {@link #usualCadence}. */
-    static final int CADENCE_WINDOW_YEARS = 5;
+    public static final int CADENCE_WINDOW_YEARS = 5;
 
     /**
      * The ticker's usual payments per year: the most common count among the last
@@ -170,9 +170,10 @@ public class AiTickerAssembler {
      * a tie going to the higher count. Not the maximum — one stray extra payment
      * (KO's 2001 holds a fifth, a pre-split duplicate from Yahoo) made every normal
      * year read as short, so all of them went partial and the streak read 0.
-     * Same rule as the Historical page's {@code usualCadence}.
+     * Same rule as the Historical page's {@code usualCadence}, and the dividend
+     * calendar's payment frequency.
      */
-    static int usualCadence(TreeMap<Integer, Integer> counts, int currentYear) {
+    public static int usualCadence(TreeMap<Integer, Integer> counts, int currentYear) {
         List<Integer> votes = new ArrayList<>();
         for (int c : counts.headMap(currentYear, false).descendingMap().values()) {
             if (votes.size() == CADENCE_WINDOW_YEARS) break;

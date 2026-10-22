@@ -4,8 +4,10 @@ import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.Dividend;
 import com.dev.alex.Model.NonDbModel.DividendsCalendarData;
+import com.dev.alex.Model.NonDbModel.MarketStatistics;
 import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.Transactions;
+import com.dev.alex.Service.Ai.AiTickerAssembler;
 import com.dev.alex.Service.Dividends.DividendUtils;
 import com.dev.alex.Service.Interface.DividendCalendarService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -72,11 +75,18 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                                         .toList()
                                         : lastYearDividends;
 
+                        TickerMeta meta = metaOf(marketData, dividendList, null, LocalDate.now());
+                        int thisYear = yearStart.getYear();
+                        int thisMonth = LocalDate.now().getMonthValue();
                         for (Dividend dividend : onePerMonth(template)) {
-                                String monthName = dividend.getDividendDate().getMonth().toString();
-                                dividendByMonth.computeIfAbsent(monthName, m -> new ArrayList<>())
-                                                .add(new DividendsCalendarData(
-                                                                ticker, dividend.getDividendAmount(), quantity, true));
+                                Month month = dividend.getDividendDate().getMonth();
+                                // the next occurrence of that month: this year's or, once it
+                                // is behind us, next year's
+                                LocalDate exDate = dividend.getDividendDate().withYear(
+                                                month.getValue() >= thisMonth ? thisYear : thisYear + 1);
+                                dividendByMonth.computeIfAbsent(month.toString(), m -> new ArrayList<>())
+                                                .add(entry(ticker, dividend.getDividendAmount(), quantity, true,
+                                                                exDate, meta));
                         }
                 }
                 return dividendByMonth.entrySet().stream()
@@ -164,6 +174,9 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                                         .sorted(Comparator.comparing(Splits::getSplitDate))
                                                         .toList();
 
+                        TickerMeta meta = metaOf(marketData, dividends,
+                                        isCurrentYear || isFutureYear ? null : year, today);
+
                         // declared leg - every dividend this ticker announced for `year`.
                         // A future ex-date already on the provider's books counts too; the
                         // share walk simply returns today's position for it.
@@ -178,8 +191,8 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                         continue;
                                 }
                                 byMonth.computeIfAbsent(date.getMonth(), m -> new ArrayList<>())
-                                                .add(new DividendsCalendarData(ticker, dividend.getDividendAmount(),
-                                                                shares, false));
+                                                .add(entry(ticker, dividend.getDividendAmount(), shares, false,
+                                                                date, meta));
                                 booked.add(date.getMonth());
                         }
 
@@ -209,8 +222,8 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                         continue;
                                 }
                                 byMonth.computeIfAbsent(month, m -> new ArrayList<>())
-                                                .add(new DividendsCalendarData(ticker, dividend.getDividendAmount(),
-                                                                quantity, true));
+                                                .add(entry(ticker, dividend.getDividendAmount(), quantity, true,
+                                                                dividend.getDividendDate().withYear(year), meta));
                                 booked.add(month);
                         }
                 }
@@ -251,6 +264,132 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
 
         /** How far an ex-date may drift year to year and still be the same payment. */
         private static final int DRIFT_DAYS = 14;
+
+        /** Longest ex-date → pay-date lag believed; past it the statistics pair is taken as mismatched. */
+        private static final int MAX_PAY_LAG_DAYS = 120;
+
+        /**
+         * What every entry of one ticker shares: its market document, the months it
+         * pays in, and the ex → pay lag read off Yahoo's statistics, with the one
+         * payment that lag was measured on.
+         */
+        private record TickerMeta(MarketData marketData, int paymentsPerYear, List<Integer> paymentMonths,
+                        Integer payLagDays, LocalDate reportedExDate, LocalDate reportedPayDate) {
+        }
+
+        /**
+         * How often the ticker pays is its usual cadence — the most common yearly
+         * payment count of the last five finished years, ending at {@code closedYear},
+         * or at last year when null ({@link AiTickerAssembler#usualCadence}, the
+         * Historical page's rule). Counting the months of one window instead let a
+         * single payment Yahoo never listed flip the label: ISNPY's history has no
+         * November 2025 interim, so its trailing year held May alone and a twice-a-year
+         * payer read "Annual".
+         *
+         * <p>
+         * The months start from that one window ({@code closedYear} itself, or the
+         * trailing twelve months up to {@code today}), the schedule in force, and are
+         * filled up to the cadence from earlier years, newest first, so a missing
+         * payment does not drop its month and a moved schedule does not keep its old
+         * months.
+         *
+         * <p>
+         * The lag comes from {@code statistics.exDividendDate} and {@code
+         * nextDividendDate} (Yahoo's {@code dividendDate}, the pay date). Yahoo
+         * refreshes the two independently, so the pair can describe two different
+         * payments: a stale ex-date against the next pay date reads one payment
+         * interval too long, a fresh ex-date against the last pay date negative. A
+         * real lag is shorter than the interval between payments, so anything
+         * outside that is dropped and the ticker reports no pay dates at all rather
+         * than wrong ones.
+         */
+        private static TickerMeta metaOf(MarketData marketData, List<Dividend> dividends, Integer closedYear,
+                        LocalDate today) {
+                LocalDate windowStart = today.minusYears(1);
+                TreeSet<Integer> months = dividends.stream()
+                                .map(Dividend::getDividendDate)
+                                .filter(d -> closedYear != null
+                                                ? d.getYear() == closedYear
+                                                : d.isAfter(windowStart) && !d.isAfter(today))
+                                .map(LocalDate::getMonthValue)
+                                .collect(Collectors.toCollection(TreeSet::new));
+
+                int lastFinished = closedYear != null ? closedYear : today.getYear() - 1;
+                TreeMap<Integer, Integer> counts = new TreeMap<>();
+                dividends.forEach(d -> counts.merge(d.getDividendDate().getYear(), 1, Integer::sum));
+                // a payer with no finished year yet has only its window to go by
+                int cadence = counts.headMap(lastFinished, true).isEmpty()
+                                ? months.size()
+                                : AiTickerAssembler.usualCadence(counts, lastFinished + 1);
+
+                int oldest = lastFinished - AiTickerAssembler.CADENCE_WINDOW_YEARS;
+                int firstFill = closedYear != null ? closedYear - 1 : lastFinished;
+                for (int year = firstFill; months.size() < cadence && year > oldest; year--) {
+                        int y = year;
+                        dividends.stream()
+                                        .map(Dividend::getDividendDate)
+                                        .filter(d -> d.getYear() == y)
+                                        .map(LocalDate::getMonthValue)
+                                        .forEach(m -> {
+                                                if (months.size() < cadence) months.add(m);
+                                        });
+                }
+                List<Integer> paymentMonths = new ArrayList<>(months);
+
+                MarketStatistics statistics = marketData.getStatistics();
+                LocalDate ex = statistics == null ? null : statistics.getExDividendDate();
+                LocalDate pay = statistics == null ? null : statistics.getNextDividendDate();
+                if (ex == null || pay == null) {
+                        return new TickerMeta(marketData, cadence, paymentMonths, null, null, null);
+                }
+                long lag = ChronoUnit.DAYS.between(ex, pay);
+                long interval = 365 / Math.max(cadence, 1);
+                if (lag < 0 || lag >= interval || lag > MAX_PAY_LAG_DAYS) {
+                        return new TickerMeta(marketData, cadence, paymentMonths, null, null, null);
+                }
+                return new TickerMeta(marketData, cadence, paymentMonths, (int) lag, ex, pay);
+        }
+
+        /**
+         * One calendar row. A scheduled payment within {@code DRIFT_DAYS} of the
+         * ex-date Yahoo already reports is that payment, declared but not yet in the
+         * dividend history (Yahoo lists one only after its ex-date), so it takes the
+         * reported dates instead of last year's moved forward.
+         */
+        private static DividendsCalendarData entry(String ticker, BigDecimal amount, BigDecimal shares,
+                        boolean scheduled, LocalDate exDate, TickerMeta meta) {
+                LocalDate reportedEx = meta.reportedExDate();
+                if (scheduled && reportedEx != null
+                                && Math.abs(reportedEx.toEpochDay() - exDate.toEpochDay()) <= DRIFT_DAYS) {
+                        exDate = reportedEx;
+                }
+                DividendsCalendarData data = new DividendsCalendarData(ticker, amount, shares, scheduled);
+                data.setExDate(exDate);
+                MarketData marketData = meta.marketData();
+                data.setName(marketData.getName());
+                data.setCountry(marketData.getCountry());
+                data.setCurrency(marketData.getCurrency());
+                data.setPaymentMonths(meta.paymentMonths());
+                data.setPaymentsPerYear(meta.paymentsPerYear() > 0 ? meta.paymentsPerYear() : null);
+                if (meta.payLagDays() != null) {
+                        if (exDate.equals(reportedEx)) {
+                                data.setPayDate(meta.reportedPayDate());
+                        } else {
+                                data.setPayDate(nextBusinessDay(exDate.plusDays(meta.payLagDays())));
+                                data.setPayDateEstimated(true);
+                        }
+                }
+                return data;
+        }
+
+        /** A pay date that lands on a weekend is paid the following Monday. */
+        private static LocalDate nextBusinessDay(LocalDate date) {
+                return switch (date.getDayOfWeek()) {
+                        case SATURDAY -> date.plusDays(2);
+                        case SUNDAY -> date.plusDays(1);
+                        default -> date;
+                };
+        }
 
         /**
          * Whether a payment the template expects on {@code expected} has already

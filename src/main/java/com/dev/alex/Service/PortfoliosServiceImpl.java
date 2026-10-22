@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Repository.CashHoldingRepository;
 import com.dev.alex.Repository.CustomAssetRepository;
+import com.dev.alex.Repository.DividendReceiptRepository;
 import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.ImportBatchRepository;
 import com.dev.alex.Repository.MarketDataRepository;
@@ -46,11 +47,13 @@ public class PortfoliosServiceImpl implements PortfolioService {
     private MarketDataRepository marketDataRepository;
     @Autowired
     private WatchlistRepository watchlistRepository;
+    @Autowired
+    private DividendReceiptRepository dividendReceiptRepository;
 
     /**
      * Deletes the portfolio and every document keyed by its portfolioId:
      * transactions, holdings, custom assets, manual cash, import batches,
-     * tags, notes, the watchlist and the realized-P&L cache. Also removes marketData docs
+     * tags, notes, the watchlist, dividend receipts and the realized-P&L cache. Also removes marketData docs
      * of this portfolio's custom tickers when no other portfolio defines the
      * same custom ticker (they hold user-set prices, not provider data).
      * Global collections (marketData of listed tickers, priceHistoryCache,
@@ -75,6 +78,7 @@ public class PortfoliosServiceImpl implements PortfolioService {
         tickerTagsRepository.deleteAllByPortfolioId(portfolioId);
         tickerNotesRepository.deleteAllByPortfolioId(portfolioId);
         watchlistRepository.deleteAllByPortfolioId(portfolioId);
+        dividendReceiptRepository.deleteAllByPortfolioId(portfolioId);
         realizedPnlCacheRepository.deleteById(portfolioId);
         portfolioRepository.deleteById(portfolioId); // _id == portfolioId
     }
