@@ -12,6 +12,7 @@ import com.dev.alex.Service.HoldingServiceImpl;
 import com.dev.alex.Service.PortfolioAccessService;
 import com.dev.alex.Service.PortfolioPerformanceServiceImpl;
 import com.dev.alex.Service.TransactionServiceImpl;
+import com.dev.alex.Service.TransactionCreationService;
 import com.dev.alex.Service.TickersServiceImpl;
 import com.dev.alex.Service.WebCalls.FlaskClientService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -54,12 +55,15 @@ public class TransactionController {
     private PortfolioAccessService portfolioAccessService;
     @Autowired
     private PortfolioPerformanceServiceImpl performanceService;
+    @Autowired
+    private TransactionCreationService transactionCreationService;
 
-    @Operation(summary = "Create Transaction", description = "Create new transaction")
+    @Operation(summary = "Create Transaction", description = "Create a transaction. Send an optional Idempotency-Key (1-128 ASCII letters/digits/._:-) and reuse it on retries. Scoped to the portfolio; changed details return 409. Retained until the transaction is deleted. Replays return the stored row without repeating holding/price updates.")
     @ApiResponse(responseCode = "200", description = "Transaction created successfully")
     @PostMapping("/{portfolioId}/createTransaction")
     public ResponseEntity<?> createTransaction(@RequestBody Transactions transaction,
-            @PathVariable String portfolioId, Authentication authentication) {
+            @PathVariable String portfolioId, Authentication authentication,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         transaction.setTransactionId(UUID.randomUUID().toString());
         transaction.setPortfolioId(portfolioId);
@@ -67,8 +71,13 @@ public class TransactionController {
             transaction.setTotalAmount(transaction.getPrice().multiply(transaction.getQuantity()));
         }
         if (transaction.getTicker() != null) {
-            transaction.setTicker(transaction.getTicker().toUpperCase());
+            transaction.setTicker(transaction.getTicker().toUpperCase(java.util.Locale.ROOT));
         }
+
+        // Fingerprint client input before custom-asset defaults (which may change between retries).
+        transactionCreationService.prepare(transaction, idempotencyKey);
+        Optional<Transactions> replay = transactionCreationService.findReplay(transaction);
+        if (replay.isPresent()) return creationReplay(replay.get());
 
         // Only BUY/SELL change a share count. DIVIDEND/TAX and DEPOSIT/WITHDRAWAL are cash events
         // and never touch a holding — a stock DIVIDEND used to fall through to the custom-asset
@@ -106,7 +115,9 @@ public class TransactionController {
             });
         }
 
-        Transactions transactionStatus = transactionsRepository.save(transaction);
+        TransactionCreationService.Creation creation = transactionCreationService.insert(transaction);
+        if (!creation.inserted()) return creationReplay(creation.transaction());
+        Transactions transactionStatus = creation.transaction();
         performanceService.evictRealizedPnLCache(portfolioId);
 
         boolean holdingSynced = true;
@@ -132,10 +143,16 @@ public class TransactionController {
             }
         }
 
+        transactionCreationService.recordHoldingSync(transactionStatus, holdingSynced);
         Map<String, Object> response = new HashMap<>();
         response.put("save", transactionStatus);
         response.put("holdingSynced", holdingSynced);
         return ResponseEntity.ok(response);
+    }
+
+    private ResponseEntity<?> creationReplay(Transactions transaction) {
+        return ResponseEntity.ok().header("Idempotency-Replayed", "true").body(Map.of(
+                "save", transaction, "holdingSynced", Boolean.TRUE.equals(transaction.getCreationHoldingSynced())));
     }
 
     /** Best-effort price refresh after a trade in a ticker that already has market data. */

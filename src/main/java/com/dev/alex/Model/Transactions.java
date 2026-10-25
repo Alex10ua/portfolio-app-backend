@@ -7,6 +7,8 @@ import java.util.Date;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Transient;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Enums.TransactionType;
@@ -16,6 +18,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Document("transactions")
+@CompoundIndex(name = "transaction_creation_key", def = "{'portfolioId': 1, 'idempotencyKey': 1}",
+        unique = true, partialFilter = "{'idempotencyKey': {'$type': 'string'}}")
 @AllArgsConstructor
 @NoArgsConstructor
 @Data
@@ -46,6 +50,14 @@ public class Transactions {
     private String currency;
     private BigDecimal commission;
     private String importBatchId;
+    // Nullable additive metadata: legacy/imported rows are outside the partial unique index.
+    // Kept on edits so a retry is compared with the original request, not today's row.
+    @JsonIgnore
+    private String idempotencyKey;
+    @JsonIgnore
+    private String creationRequestHash;
+    @JsonIgnore
+    private Boolean creationHoldingSynced;
     @Transient
     private BigDecimal fxRate; // populated at query time from exchangeRates, not stored in DB
 }
