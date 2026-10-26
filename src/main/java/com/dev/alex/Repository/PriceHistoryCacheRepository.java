@@ -6,6 +6,8 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
+import java.util.Collection;
+import java.util.List;
 
 @Repository
 public interface PriceHistoryCacheRepository extends MongoRepository<PriceHistoryCache, String> {
@@ -16,4 +18,7 @@ public interface PriceHistoryCacheRepository extends MongoRepository<PriceHistor
      */
     @Query(value = "{'_id': ?0}", fields = "{'history': 1}")
     Optional<PriceHistoryCache> findDailyById(String ticker);
+
+    @Query(value = "{'_id': {'$in': ?0}}", fields = "{'history': 1}")
+    List<PriceHistoryCache> findDailyByTickerIn(Collection<String> tickers);
 }

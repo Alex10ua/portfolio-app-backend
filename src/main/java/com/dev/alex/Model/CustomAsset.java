@@ -7,6 +7,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -16,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 @Document("customAssets")
+@CompoundIndex(name = "custom_assets_portfolio_ticker", def = "{'portfolioId': 1, 'ticker': 1}")
 @AllArgsConstructor
 @NoArgsConstructor
 @Data
@@ -23,6 +26,7 @@ public class CustomAsset {
     @Id
     private String id;
     private String portfolioId;
+    @Indexed(name = "custom_assets_ticker")
     private String ticker;          // unique per portfolio, user-defined ID (e.g. "SILV-EAGLE-1OZ")
     private String name;            // display name (e.g. "Silver Eagle 1oz")
     private String assetType;       // user-defined category label (e.g. "COIN", "FIGURE", "WINE")

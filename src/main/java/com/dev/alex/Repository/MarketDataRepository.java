@@ -33,13 +33,26 @@ public interface MarketDataRepository extends MongoRepository<MarketData, String
     // tickers instead of one per holding (avoids N+1). Projects ticker to key the result,
     // and currency because the holdings rows report it as quoteCurrency.
     @Query(value = "{'ticker': {'$in': ?0}}",
-           fields = "{'ticker' : 1, 'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1, 'sharesOutstanding' : 1, 'name' : 1, 'currency' : 1}")
+           fields = "{'ticker' : 1, 'priceYesterday' : 1, 'price' : 1, 'yearlyDividend' : 1, 'sharesOutstanding' : 1, 'name' : 1, 'currency' : 1, 'splits' : 1}")
     List<MarketData> findByTickerInForHoldingsPage(java.util.Collection<String> tickers);
 
     @Query(value = "{'ticker' : #{#ticker}}")
     MarketData getDividendsAfter(@Param("ticker") String ticker);
 
     List<MarketData> findAllByTickerIn(java.util.Collection<String> tickers);
+
+    @Query(value = "{'ticker': {'$in': ?0}}",
+           fields = "{'ticker':1, 'price':1, 'currency':1, 'splits':1}")
+    List<MarketData> findByTickerInForPerformance(java.util.Collection<String> tickers);
+
+    // Income views need the action history and pay-date snapshot, not price/statistics payloads.
+    @Query(value = "{'ticker': {'$in': ?0}}",
+           fields = "{'ticker':1, 'currency':1, 'dividends':1, 'splits':1, 'yearlyDividend':1, 'lastDividendPayment':1, 'name':1, 'country':1, 'statistics.exDividendDate':1, 'statistics.nextDividendDate':1}")
+    List<MarketData> findByTickerInForIncome(java.util.Collection<String> tickers);
+
+    @Query(value = "{'ticker': {'$in': ?0}}",
+           fields = "{'ticker':1, 'price':1, 'country':1, 'sector':1, 'industry':1}")
+    List<MarketData> findByTickerInForDiversification(java.util.Collection<String> tickers);
 
     /** Add-ticker search: case-insensitive substring over symbol and company name. */
     @Query(value = "{'$or': [{'ticker': {'$regex': ?0, '$options': 'i'}}, {'name': {'$regex': ?0, '$options': 'i'}}]}",

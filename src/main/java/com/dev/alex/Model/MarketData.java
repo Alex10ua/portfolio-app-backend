@@ -10,6 +10,7 @@ import com.dev.alex.Model.NonDbModel.MarketStatistics;
 import com.dev.alex.Model.NonDbModel.Splits;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.index.Indexed;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -23,6 +24,7 @@ import lombok.NoArgsConstructor;
 public class MarketData {
     @Id
     private String id;
+    @Indexed(name = "market_data_ticker")
     private String ticker;
     private String name;
     private BigDecimal price;

@@ -5,12 +5,14 @@ import java.time.LocalDateTime;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Document("import_batches")
+@CompoundIndex(name = "imports_portfolio_uploaded", def = "{'portfolioId': 1, 'uploadedAt': -1}")
 @AllArgsConstructor
 @NoArgsConstructor
 @Data

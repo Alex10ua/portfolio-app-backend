@@ -5,7 +5,6 @@ import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.Dividend;
 import com.dev.alex.Model.NonDbModel.DividendsCalendarData;
 import com.dev.alex.Model.NonDbModel.MarketStatistics;
-import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Service.Ai.AiTickerAssembler;
 import com.dev.alex.Service.Dividends.DividendUtils;
@@ -44,6 +43,7 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                                 Holdings::getTicker,
                                                 Collectors.reducing(BigDecimal.ZERO, Holdings::getQuantity,
                                                                 BigDecimal::add)));
+                Map<String, MarketData> marketByTicker = marketDataService.getMarketDataForIncome(tickerQuantity.keySet());
 
                 LocalDate yearStart = Year.now().atDay(1);
                 LocalDate previousYearStart = yearStart.minusYears(1);
@@ -51,7 +51,7 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                 for (Map.Entry<String, BigDecimal> entry : tickerQuantity.entrySet()) {
                         String ticker = entry.getKey();
                         BigDecimal quantity = entry.getValue();
-                        MarketData marketData = marketDataService.getMarketDataByTicker(ticker);
+                        MarketData marketData = marketByTicker.get(ticker);
                         if (marketData == null || marketData.getLastDividendPayment() == null
                                         || marketData.getDividends() == null) {
                                 continue;
@@ -142,18 +142,16 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                 .findAllByPortfolioId(portfolioId).stream()
                                 .filter(t -> t.getTicker() != null && t.getDate() != null)
                                 .collect(Collectors.groupingBy(Transactions::getTicker));
-                transactionsByTicker.values()
-                                .forEach(list -> list.sort(Comparator.comparing(Transactions::getDate)));
-
                 // A position closed since then still paid while it was held, so walk every
                 // ticker that ever traded in this portfolio, not only today's holdings.
                 Set<String> tickers = new LinkedHashSet<>(tickerQuantity.keySet());
                 tickers.addAll(transactionsByTicker.keySet());
+                Map<String, MarketData> marketByTicker = marketDataService.getMarketDataForIncome(tickers);
 
                 Map<Month, List<DividendsCalendarData>> byMonth = new EnumMap<>(Month.class);
 
                 for (String ticker : tickers) {
-                        MarketData marketData = marketDataService.getMarketDataByTicker(ticker);
+                        MarketData marketData = marketByTicker.get(ticker);
                         if (marketData == null || marketData.getDividends() == null) {
                                 continue;
                         }
@@ -167,12 +165,8 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                         }
 
                         List<Transactions> transactions = transactionsByTicker.getOrDefault(ticker, List.of());
-                        List<Splits> splits = marketData.getSplits() == null
-                                        ? List.of()
-                                        : marketData.getSplits().stream()
-                                                        .filter(s -> s != null && s.getSplitDate() != null)
-                                                        .sorted(Comparator.comparing(Splits::getSplitDate))
-                                                        .toList();
+                        DividendUtils.ShareTimeline sharesByDate = dividendUtils.prepareEntitlements(
+                                        transactions, marketData.getSplits());
 
                         TickerMeta meta = metaOf(marketData, dividends,
                                         isCurrentYear || isFutureYear ? null : year, today);
@@ -186,7 +180,7 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                                 if (date.getYear() != year) {
                                         continue;
                                 }
-                                BigDecimal shares = dividendUtils.getSharesHeldOnDate(date, transactions, splits);
+                                BigDecimal shares = sharesByDate.sharesBefore(date);
                                 if (shares.compareTo(BigDecimal.ZERO) <= 0) {
                                         continue;
                                 }

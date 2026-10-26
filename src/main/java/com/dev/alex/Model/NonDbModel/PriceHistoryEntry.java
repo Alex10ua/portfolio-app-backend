@@ -13,4 +13,10 @@ import java.time.LocalDate;
 public class PriceHistoryEntry {
     private LocalDate date;
     private BigDecimal price;
+    /** Yahoo Close: split-adjusted, but without the dividend adjustment in price. */
+    private BigDecimal rawPrice;
+
+    public PriceHistoryEntry(LocalDate date, BigDecimal price) {
+        this(date, price, null);
+    }
 }

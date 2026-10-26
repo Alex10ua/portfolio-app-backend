@@ -8,6 +8,8 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Transient;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
+import org.springframework.data.mongodb.core.index.Indexed;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import com.dev.alex.Model.Enums.Assets;
@@ -18,8 +20,12 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Document("transactions")
-@CompoundIndex(name = "transaction_creation_key", def = "{'portfolioId': 1, 'idempotencyKey': 1}",
-        unique = true, partialFilter = "{'idempotencyKey': {'$type': 'string'}}")
+@CompoundIndexes({
+        @CompoundIndex(name = "transaction_creation_key", def = "{'portfolioId': 1, 'idempotencyKey': 1}",
+                unique = true, partialFilter = "{'idempotencyKey': {'$type': 'string'}}"),
+        @CompoundIndex(name = "transactions_portfolio_date", def = "{'portfolioId': 1, 'date': 1}"),
+        @CompoundIndex(name = "transactions_portfolio_ticker_date", def = "{'portfolioId': 1, 'ticker': 1, 'date': 1}")
+})
 @AllArgsConstructor
 @NoArgsConstructor
 @Data
@@ -49,6 +55,7 @@ public class Transactions {
     private BigDecimal totalAmount;
     private String currency;
     private BigDecimal commission;
+    @Indexed(name = "transactions_import_batch")
     private String importBatchId;
     // Nullable additive metadata: legacy/imported rows are outside the partial unique index.
     // Kept on edits so a retry is compared with the original request, not today's row.

@@ -2,6 +2,7 @@ package com.dev.alex.Controller;
 
 import com.dev.alex.Model.NonDbModel.PerformanceData;
 import com.dev.alex.Model.NonDbModel.PerformancePoint;
+import com.dev.alex.Model.NonDbModel.PnlSummary;
 import com.dev.alex.Service.PortfolioAccessService;
 import com.dev.alex.Service.PortfolioPerformanceServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,5 +45,11 @@ public class PortfolioPerformanceController {
             @PathVariable String portfolioId, Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         return ResponseEntity.ok(performanceService.getRealizedPnLByCurrency(portfolioId));
+    }
+
+    @GetMapping("/{portfolioId}/pnl-summary")
+    public PnlSummary getPnlSummary(@PathVariable String portfolioId, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        return performanceService.getPnlSummary(portfolioId);
     }
 }

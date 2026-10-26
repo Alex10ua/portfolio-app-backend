@@ -26,8 +26,6 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
         @Autowired
         private HoldingServiceImpl holdingService;
         @Autowired
-        private MarketDataServiceImpl marketDataService;
-        @Autowired
         private FxRateService fxRateService;
 
         /**
@@ -42,14 +40,12 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
         public List<HoldingsCompleteData> getAllHoldingsByPortfolioId(String portfolioId) {
 
                 List<HoldingsCompleteData> holdingsCompleteDataList = new ArrayList<>();
-                List<Holdings> allHolding = holdingService.getAllHoldingsByPortfolioId(portfolioId);
+                HoldingServiceImpl.HoldingsSnapshot snapshot = holdingService.getPortfolioHoldingsSnapshot(portfolioId);
+                List<Holdings> allHolding = snapshot.holdings();
 
                 // Pre-fetch market data and FX rates once for the whole portfolio to avoid
                 // ~2N per-row DB round trips (one marketData + one FX lookup per holding).
-                List<String> tickers = allHolding.stream()
-                                .map(h -> h.getTicker() == null ? null : h.getTicker().toUpperCase())
-                                .filter(java.util.Objects::nonNull).distinct().toList();
-                Map<String, MarketData> marketDataByTicker = marketDataService.getMarketDataForHoldingsPage(tickers);
+                Map<String, MarketData> marketDataByTicker = snapshot.marketData();
                 Map<String, BigDecimal> fxRates = fxRateService.getAllRatesAsMap();
 
                 for (Holdings holding : allHolding) {
@@ -62,20 +58,24 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                         row.setName(isStock ? (marketData != null ? marketData.getName() : null) : holding.getName());
                         row.setShareAmount(holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
                         row.setExactShareAmount(holding.getQuantity());
-                        row.setCostPerShare(isStock
+                        BigDecimal costBasis = holding.getOpenCostBasis();
+                        row.setCostPerShare(costBasis == null ? null : isStock
                                         ? holding.getAveragePurchasePrice().setScale(2, RoundingMode.HALF_EVEN)
                                         : holding.getAveragePurchasePrice());
-                        BigDecimal costBasis = holding.getAveragePurchasePrice().multiply(holding.getQuantity());
-                        row.setCostBasis(costBasis.setScale(2, RoundingMode.HALF_EVEN));
+                        row.setCostBasis(costBasis == null ? null : costBasis.setScale(2, RoundingMode.HALF_EVEN));
+                        row.setCommissions(holding.getCommissions());
+                        row.setCostBasisByCurrency(holding.getCostBasisByCurrency());
+                        row.setCommissionsByCurrency(holding.getCommissionsByCurrency());
                         row.setCurrency(holding.getCurrency());
                         row.setFxRate(fxRateService.getRateForCurrency(holding.getCurrency(), fxRates));
 
                         if (marketData == null || marketData.getPrice() == null) {
-                                row.setCurrentTotalValue(BigDecimal.ZERO);
-                                row.setCurrentShareValue(BigDecimal.ZERO);
-                                row.setTotalProfit(BigDecimal.ZERO);
-                                row.setTotalProfitPercentage(BigDecimal.ZERO);
-                                if (isStock) row.setDailyChange(BigDecimal.ZERO);
+                                // An absent quote cannot establish either a zero value or a loss.
+                                // Keep the known FIFO cost/fees and let clients show value as unavailable.
+                                if (marketData != null) {
+                                        row.setQuoteCurrency(marketData.getCurrency());
+                                        row.setSharesOutstanding(marketData.getSharesOutstanding());
+                                }
                                 holdingsCompleteDataList.add(row);
                                 continue;
                         }
@@ -94,7 +94,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                         : marketData.getPrice());
                         row.setSharesOutstanding(marketData.getSharesOutstanding());
 
-                        if (sameCurrency) {
+                        if (sameCurrency && costBasis != null) {
                                 BigDecimal totalProfit = currentTotalValue.subtract(costBasis)
                                                 .setScale(2, RoundingMode.HALF_EVEN);
                                 row.setTotalProfit(totalProfit);
@@ -105,7 +105,7 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                         }
 
                         if (isStock) {
-                                if (marketData.getYearlyDividend() != null) {
+                                if (marketData.getYearlyDividend() != null && marketData.getPrice().signum() > 0) {
                                         row.setDividend(marketData.getYearlyDividend());
                                         row.setDividendYield(marketData.getYearlyDividend()
                                                         .divide(marketData.getPrice(), MATH_CONTEXT)

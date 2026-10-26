@@ -4,14 +4,10 @@ import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.NonDbModel.Dividend;
 import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.Transactions;
-import jakarta.validation.constraints.Null;
-import org.springframework.context.annotation.Description;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -45,39 +41,94 @@ public class DividendUtils {
     public BigDecimal getSharesHeldOnDate(LocalDate exDividendDate,
                                           List<Transactions> transactions,
                                           List<Splits> splits) {
-        if (exDividendDate == null || transactions == null) return ZERO;
+        if (exDividendDate == null) return ZERO;
+        return prepareEntitlements(transactions, splits).sharesBefore(exDividendDate);
+    }
 
-        List<Transactions> entitled = transactions.stream()
+    /**
+     * Prepares one ticker once, so every dividend date can use a prefix balance rather
+     * than replaying its trades. Split suffixes keep each trade in today's share basis,
+     * including splits after the dividend date; no division or intermediate rounding.
+     */
+    public ShareTimeline prepareEntitlements(List<Transactions> transactions, List<Splits> splits) {
+        NavigableMap<LocalDate, BigDecimal> splitRatios = new TreeMap<>();
+        if (splits != null) {
+            for (Splits split : splits) {
+                if (split == null || split.getSplitDate() == null || split.getRatioSplit() == null
+                        || split.getRatioSplit().signum() <= 0) continue;
+                splitRatios.merge(split.getSplitDate(), split.getRatioSplit(), BigDecimal::multiply);
+            }
+        }
+        NavigableMap<LocalDate, BigDecimal> suffixFactors = new TreeMap<>();
+        BigDecimal factor = BigDecimal.ONE;
+        for (Map.Entry<LocalDate, BigDecimal> split : splitRatios.descendingMap().entrySet()) {
+            factor = factor.multiply(split.getValue());
+            suffixFactors.put(split.getKey(), factor);
+        }
+
+        List<Transactions> ordered = transactions == null ? List.of() : transactions.stream()
                 .filter(tx -> tx != null && tx.getDate() != null && tx.getQuantity() != null
-                        && tx.getDate().isBefore(exDividendDate))
+                        && (tx.getTransactionType() == TransactionType.BUY
+                            || tx.getTransactionType() == TransactionType.SELL))
                 .sorted(Comparator.comparing(Transactions::getDate))
                 .toList();
-
+        NavigableMap<LocalDate, BigDecimal> balances = new TreeMap<>();
         BigDecimal sharesHeld = ZERO;
-        for (Transactions tx : entitled) {
-            BigDecimal quantity = tx.getQuantity().multiply(splitFactorAfter(splits, tx.getDate()));
+        for (Transactions tx : ordered) {
+            // A trade on the split date is already post-split: use strictly later splits.
+            Map.Entry<LocalDate, BigDecimal> suffix = suffixFactors.higherEntry(tx.getDate());
+            BigDecimal quantity = tx.getQuantity().multiply(suffix == null ? BigDecimal.ONE : suffix.getValue());
             if (tx.getTransactionType() == TransactionType.BUY) {
                 sharesHeld = sharesHeld.add(quantity);
-            } else if (tx.getTransactionType() == TransactionType.SELL) {
+            } else {
                 // oversell (e.g. a partial import missing its BUYs) is clamped, never negative
                 sharesHeld = sharesHeld.subtract(quantity).max(ZERO);
             }
+            balances.put(tx.getDate(), sharesHeld);
         }
-        return sharesHeld;
+        return new ShareTimeline(balances);
     }
 
-    /** Product of the ratios of every split dated after {@code date}; 1 when none. */
-    private static BigDecimal splitFactorAfter(List<Splits> splits, LocalDate date) {
-        BigDecimal factor = BigDecimal.ONE;
-        if (splits == null) return factor;
-        for (Splits split : splits) {
-            if (split == null || split.getSplitDate() == null || split.getRatioSplit() == null
-                    || split.getRatioSplit().signum() <= 0) continue;
-            if (date.isBefore(split.getSplitDate())) {
-                factor = factor.multiply(split.getRatioSplit());
-            }
+    public static final class ShareTimeline {
+        private final NavigableMap<LocalDate, BigDecimal> balances;
+
+        private ShareTimeline(NavigableMap<LocalDate, BigDecimal> balances) {
+            this.balances = balances;
         }
-        return factor;
+
+        public BigDecimal sharesBefore(LocalDate exDividendDate) {
+            if (exDividendDate == null) return ZERO;
+            // Both BUY and SELL on the ex-date leave the prior closing balance entitled.
+            Map.Entry<LocalDate, BigDecimal> balance = balances.lowerEntry(exDividendDate);
+            return balance == null ? ZERO : balance.getValue();
+        }
+    }
+
+    public record DividendTotals(BigDecimal total, Map<String, BigDecimal> byMonth) {
+    }
+
+    /** A single entitlement pass supplies both ticker totals and the monthly income series. */
+    public DividendTotals calculateDividends(List<Dividend> dividends,
+                                             List<Transactions> transactions, List<Splits> splits) {
+        return calculateDividends(dividends, prepareEntitlements(transactions, splits), BigDecimal.ONE);
+    }
+
+    private DividendTotals calculateDividends(List<Dividend> dividends, ShareTimeline shares, BigDecimal divisor) {
+        BigDecimal total = ZERO;
+        Map<String, BigDecimal> byMonth = new TreeMap<>();
+        if (dividends == null) return new DividendTotals(total, byMonth);
+        for (Dividend dividend : dividends) {
+            if (dividend == null || dividend.getDividendDate() == null || dividend.getDividendAmount() == null) continue;
+            BigDecimal quantity = shares.sharesBefore(dividend.getDividendDate());
+            if (quantity.signum() <= 0) continue;
+            BigDecimal amount = quantity.multiply(dividend.getDividendAmount());
+            if (divisor.compareTo(BigDecimal.ONE) != 0) {
+                amount = amount.divide(divisor, 10, RoundingMode.HALF_UP);
+            }
+            total = total.add(amount);
+            byMonth.merge(dividend.getDividendDate().format(YEAR_MONTH_FORMATTER), amount, BigDecimal::add);
+        }
+        return new DividendTotals(total, byMonth);
     }
 
     /**
@@ -88,24 +139,7 @@ public class DividendUtils {
     public BigDecimal calculateAllDividendsByStockAuto(List<Dividend> dividendList,
                                                        List<Transactions> sortedTransactionsList,
                                                        List<Splits> sortedSplitsList) {
-        if (dividendList == null || dividendList.isEmpty()) {
-            return ZERO;
-        }
-
-        BigDecimal totalDividendAmount = ZERO;
-
-        for (Dividend dividend : dividendList) {
-            LocalDate exDividendDate = dividend.getDividendDate(); // CRITICAL: This MUST be the ex-dividend date
-
-            BigDecimal sharesHeldOnExDate = getSharesHeldOnDate(exDividendDate, sortedTransactionsList, sortedSplitsList);
-
-            if (sharesHeldOnExDate.compareTo(ZERO) > 0) {
-                BigDecimal dividendReceived = sharesHeldOnExDate.multiply(dividend.getDividendAmount());
-                totalDividendAmount = totalDividendAmount.add(dividendReceived);
-            }
-        }
-        // Consider scaling the final result if needed, e.g., .setScale(2, RoundingMode.HALF_EVEN)
-        return totalDividendAmount;
+        return calculateDividends(dividendList, sortedTransactionsList, sortedSplitsList).total();
     }
 
     /**
@@ -145,21 +179,8 @@ public class DividendUtils {
                 continue;
             }
 
-            for (Dividend dividend : dividendList) {
-                LocalDate exDividendDate = dividend.getDividendDate(); // Ex-dividend date
-
-                BigDecimal sharesHeldOnExDate = getSharesHeldOnDate(exDividendDate, stockTransactions, stockSplits);
-
-                if (sharesHeldOnExDate.compareTo(ZERO) > 0) {
-                    BigDecimal dividendReceivedForThisInstance = sharesHeldOnExDate.multiply(dividend.getDividendAmount());
-                    if (divisor.compareTo(BigDecimal.ONE) != 0) {
-                        dividendReceivedForThisInstance = dividendReceivedForThisInstance
-                                .divide(divisor, 10, RoundingMode.HALF_UP);
-                    }
-                    String monthKey = exDividendDate.format(YEAR_MONTH_FORMATTER);
-                    monthDividendsMap.merge(monthKey, dividendReceivedForThisInstance, BigDecimal::add);
-                }
-            }
+            calculateDividends(dividendList, prepareEntitlements(stockTransactions, stockSplits), divisor)
+                    .byMonth().forEach((month, amount) -> monthDividendsMap.merge(month, amount, BigDecimal::add));
         }
         return monthDividendsMap;
     }

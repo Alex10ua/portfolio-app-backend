@@ -58,6 +58,26 @@ public class MarketDataServiceImpl implements MarketDataService {
     }
 
     @Override
+    public java.util.Map<String, MarketData> getMarketDataForIncome(java.util.Collection<String> tickers) {
+        if (tickers == null || tickers.isEmpty()) return java.util.Map.of();
+        return byTicker(marketDataRepository.findByTickerInForIncome(tickers));
+    }
+
+    @Override
+    public java.util.Map<String, MarketData> getMarketDataForDiversification(java.util.Collection<String> tickers) {
+        if (tickers == null || tickers.isEmpty()) return java.util.Map.of();
+        return byTicker(marketDataRepository.findByTickerInForDiversification(tickers));
+    }
+
+    private java.util.Map<String, MarketData> byTicker(List<MarketData> documents) {
+        java.util.Map<String, MarketData> byTicker = new java.util.HashMap<>();
+        for (MarketData md : documents) {
+            if (md.getTicker() != null) byTicker.put(md.getTicker(), md);
+        }
+        return byTicker;
+    }
+
+    @Override
     public void saveMarketData(MarketData marketData) {
         marketDataRepository.save(marketData);
     }

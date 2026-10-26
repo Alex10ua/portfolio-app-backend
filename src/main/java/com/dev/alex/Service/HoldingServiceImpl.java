@@ -18,7 +18,6 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.*;
 import lombok.extern.slf4j.Slf4j;
@@ -28,15 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 @Service
 public class HoldingServiceImpl implements HoldingsService {
-    private static final BigDecimal ZERO = BigDecimal.valueOf(0);
-    private static final MathContext MATH_CONTEXT = new MathContext(10, RoundingMode.HALF_EVEN);
-    /**
-     * Below this, a leftover share count is rounding dust from split adjustment, not a position.
-     * Split maths runs at MATH_CONTEXT precision, so selling every share can still leave a
-     * 1e-10-scale remainder that keeps a closed holding on the dashboard forever. Far under any
-     * real position (1e-9 BTC is a hundredth of a satoshi).
-     */
-    private static final BigDecimal SHARE_DUST = new BigDecimal("1E-9");
+    private static final MathContext MATH_CONTEXT = MathContext.DECIMAL128;
 
     @Autowired
     private HoldingsRepository holdingsRepository;
@@ -52,6 +43,8 @@ public class HoldingServiceImpl implements HoldingsService {
     private PortfolioRepository portfolioRepository;
     @Autowired
     private ClosedPositionCleanupService closedPositionCleanupService;
+    @Autowired
+    private PortfolioAccounting portfolioAccounting;
 
     /**
      * The one way a holding row goes away: a closed position also loses its allocation target
@@ -66,7 +59,70 @@ public class HoldingServiceImpl implements HoldingsService {
 
     @Override
     public List<Holdings> getAllHoldingsByPortfolioId(String portfolioId) {
-       return holdingsRepository.findAllByPortfolioId(portfolioId);
+       return getPortfolioHoldingsSnapshot(portfolioId).holdings();
+    }
+
+    public record HoldingsSnapshot(List<Holdings> holdings, Map<String, MarketData> marketData) {}
+
+    /**
+     * A provider refresh can discover a split without a transaction write. Rebuild positions
+     * from one transaction read and one projected market-data read, without writing on GET.
+     * Stored holding rows supply descriptive metadata only.
+     */
+    public HoldingsSnapshot getPortfolioHoldingsSnapshot(String portfolioId) {
+        LocalDate today = LocalDate.now();
+        List<Transactions> transactions = transactionService.findAllByPortfolioId(portfolioId);
+        List<Holdings> stored = holdingsRepository.findAllByPortfolioId(portfolioId);
+        Map<String, Holdings> storedByTicker = new HashMap<>();
+        for (Holdings holding : stored) {
+            if (holding.getTicker() != null) storedByTicker.putIfAbsent(holding.getTicker().toUpperCase(Locale.ROOT), holding);
+        }
+        Map<String, Transactions> metadata = new LinkedHashMap<>();
+        for (Transactions tx : transactions) {
+            if (tx.getTicker() != null && !tx.getTicker().isBlank()
+                    && (tx.getTransactionType() == TransactionType.BUY || tx.getTransactionType() == TransactionType.SELL)
+                    && tx.getDate() != null && !tx.getDate().isAfter(today)) {
+                metadata.putIfAbsent(tx.getTicker().toUpperCase(Locale.ROOT), tx);
+            }
+        }
+        List<MarketData> marketRows = metadata.isEmpty() ? List.of()
+                : marketDataRepository.findByTickerInForHoldingsPage(metadata.keySet());
+        Map<String, MarketData> marketByTicker = new HashMap<>();
+        Map<String, List<Splits>> splits = new HashMap<>();
+        for (MarketData row : marketRows) {
+            if (row.getTicker() == null) continue;
+            String ticker = row.getTicker().toUpperCase(Locale.ROOT);
+            marketByTicker.put(ticker, row);
+            if (row.getSplits() != null) splits.put(ticker, row.getSplits());
+        }
+        PortfolioAccounting.Result accounting = portfolioAccounting.calculate(transactions, splits, today);
+        List<Holdings> derived = new ArrayList<>();
+        accounting.positions().forEach((ticker, position) -> {
+            Transactions tx = metadata.get(ticker);
+            if (tx == null) return;
+            Holdings source = storedByTicker.get(ticker);
+            Holdings holding = new Holdings();
+            holding.setHoldingId(source == null ? null : source.getHoldingId());
+            holding.setPortfolioId(portfolioId);
+            holding.setTicker(ticker);
+            holding.setAssetType(tx.getAssetType() != null ? tx.getAssetType()
+                    : source != null && source.getAssetType() != null ? source.getAssetType() : Assets.STOCK);
+            holding.setName(source != null ? source.getName() : tx.getName());
+            holding.setPriceNow(source != null ? source.getPriceNow() : tx.getPriceNow());
+            holding.setCreatedAt(source != null ? source.getCreatedAt() : tx.getDate());
+            holding.setUpdatedAt(source != null ? source.getUpdatedAt() : tx.getDate());
+            holding.setCurrency(position.currency() != null ? position.currency()
+                    : source != null && source.getCurrency() != null ? source.getCurrency() : tx.getCurrency());
+            holding.setQuantity(position.quantity());
+            holding.setAveragePurchasePrice(position.costBasis() == null ? BigDecimal.ZERO
+                    : position.costBasis().divide(position.quantity(), MATH_CONTEXT));
+            holding.setOpenCostBasis(position.costBasis());
+            holding.setCommissions(position.commissions());
+            holding.setCostBasisByCurrency(position.costBasisByCurrency());
+            holding.setCommissionsByCurrency(position.commissionsByCurrency());
+            derived.add(holding);
+        });
+        return new HoldingsSnapshot(derived, marketByTicker);
     }
 
     @Override
@@ -137,7 +193,7 @@ public class HoldingServiceImpl implements HoldingsService {
 
         List<Transactions> transactionsList =
                 transactionService.findAllByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
-        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        transactionsList.sort(Comparator.comparing(Transactions::getDate, Comparator.nullsLast(Comparator.naturalOrder())));
         List<Splits> splitsList = (marketDataCheck != null) ? marketDataCheck.getSplits() : null;
         Position position = accumulate(transactionsList, splitsList);
         BigDecimal totalShares   = position.totalShares();
@@ -163,7 +219,7 @@ public class HoldingServiceImpl implements HoldingsService {
                 transactionService.findAllByPortfolioIdAndTicker(portfolioId, upperTicker);
         if (transactionsList == null || transactionsList.isEmpty()) return;
 
-        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        transactionsList.sort(Comparator.comparing(Transactions::getDate, Comparator.nullsLast(Comparator.naturalOrder())));
         LocalDate earliestDate = transactionsList.get(0).getDate();
         LocalDate latestDate   = transactionsList.get(transactionsList.size() - 1).getDate();
 
@@ -230,7 +286,7 @@ public class HoldingServiceImpl implements HoldingsService {
                 transactionService.findAllByPortfolioIdAndTicker(portfolioId, upperTicker);
         if (transactionsList == null || transactionsList.isEmpty()) return;
 
-        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        transactionsList.sort(Comparator.comparing(Transactions::getDate, Comparator.nullsLast(Comparator.naturalOrder())));
         LocalDate earliestDate = transactionsList.get(0).getDate();
         LocalDate latestDate   = transactionsList.get(transactionsList.size() - 1).getDate();
         Transactions latestTx  = transactionsList.get(transactionsList.size() - 1);
@@ -317,7 +373,7 @@ public class HoldingServiceImpl implements HoldingsService {
         }
 
         List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId, newTransaction.getTicker().toUpperCase());
-        transactionsList.sort(Comparator.comparing(Transactions::getDate));
+        transactionsList.sort(Comparator.comparing(Transactions::getDate, Comparator.nullsLast(Comparator.naturalOrder())));
         Position position = accumulate(transactionsList, null); // custom assets have no splits
         BigDecimal totalShares   = position.totalShares();
         BigDecimal finalAvgPrice = position.avgPrice();
@@ -403,50 +459,19 @@ public class HoldingServiceImpl implements HoldingsService {
     private record Position(BigDecimal totalShares, BigDecimal avgPrice) {}
 
     /**
-     * Replays BUY/SELL transactions (must be date-sorted) into a net share count + average cost.
-     * Each transaction's qty/price is split-adjusted by every split dated after it; pass
-     * {@code null}/empty splits for assets without splits (custom assets).
-     * Oversell — a SELL with no tracked shares, e.g. missing BUY history from a partial import —
-     * is clamped to available shares and otherwise skipped; it never throws. This is the single
-     * source of truth for holdings accumulation (previously duplicated across 5 methods with
-     * inconsistent oversell handling).
+     * Stored averagePurchasePrice now means remaining FIFO cost per share, including BUY fees.
+     * The same calculator serves the read snapshot and realized gains, so their bases agree.
      */
     private Position accumulate(List<Transactions> transactionsList, List<Splits> splitsList) {
-        List<Splits> splits = (splitsList != null) ? splitsList : Collections.emptyList();
-        BigDecimal totalShares = BigDecimal.ZERO;
-        BigDecimal totalCost   = BigDecimal.ZERO;
-
-        for (Transactions tx : transactionsList) {
-            BigDecimal txQuantity = tx.getQuantity();
-            BigDecimal txPrice    = tx.getPrice();
-
-            for (Splits split : splits) {
-                if (tx.getDate().isBefore(split.getSplitDate())) {
-                    txPrice    = txPrice.divide(split.getRatioSplit(), MATH_CONTEXT);
-                    txQuantity = txQuantity.multiply(split.getRatioSplit());
-                }
-            }
-
-            if (tx.getTransactionType() == TransactionType.BUY) {
-                totalShares = totalShares.add(txQuantity);
-                totalCost   = totalCost.add(txPrice.multiply(txQuantity, MATH_CONTEXT));
-            } else if (tx.getTransactionType() == TransactionType.SELL) {
-                if (totalShares.compareTo(BigDecimal.ZERO) > 0) {
-                    BigDecimal sellQty     = txQuantity.min(totalShares);
-                    BigDecimal averageCost = totalCost.divide(totalShares, MATH_CONTEXT);
-                    totalShares = totalShares.subtract(sellQty);
-                    totalCost   = totalCost.subtract(averageCost.multiply(sellQty, MATH_CONTEXT));
-                }
-            }
+        Map<String, List<Splits>> splitsByTicker = new HashMap<>();
+        if (splitsList != null) for (Transactions tx : transactionsList) {
+            if (tx.getTicker() != null) splitsByTicker.put(tx.getTicker().toUpperCase(Locale.ROOT), splitsList);
         }
-
-        if (totalShares.abs().compareTo(SHARE_DUST) < 0) {
-            totalShares = BigDecimal.ZERO;
-        }
-        BigDecimal avgPrice = (totalShares.compareTo(BigDecimal.ZERO) > 0)
-                ? totalCost.divide(totalShares, MATH_CONTEXT)
-                : BigDecimal.ZERO;
-        return new Position(totalShares, avgPrice);
+        PortfolioAccounting.Result result = portfolioAccounting.calculate(transactionsList, splitsByTicker, LocalDate.now());
+        if (result.positions().isEmpty()) return new Position(BigDecimal.ZERO, BigDecimal.ZERO);
+        PortfolioAccounting.Position position = result.positions().values().iterator().next();
+        return new Position(position.quantity(), position.costBasis() == null ? BigDecimal.ZERO
+                : position.costBasis().divide(position.quantity(), MATH_CONTEXT));
     }
 
 }

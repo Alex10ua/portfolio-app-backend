@@ -64,6 +64,15 @@ public class CustomAssetServiceImpl implements CustomAssetService {
         return customAssetRepository.findAllByPortfolioId(portfolioId);
     }
 
+    public Map<String, CustomAsset> findForDiversification(String portfolioId, Collection<String> tickers) {
+        Map<String, CustomAsset> byTicker = new HashMap<>();
+        if (tickers == null || tickers.isEmpty()) return byTicker;
+        for (CustomAsset asset : customAssetRepository.findForDiversification(portfolioId, tickers)) {
+            if (asset.getTicker() != null) byTicker.put(asset.getTicker(), asset);
+        }
+        return byTicker;
+    }
+
     @Override
     public CustomAsset findByPortfolioIdAndTicker(String portfolioId, String ticker) {
         return customAssetRepository.findByPortfolioIdAndTicker(portfolioId, ticker.toUpperCase())

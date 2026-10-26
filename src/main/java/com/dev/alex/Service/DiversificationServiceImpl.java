@@ -15,7 +15,8 @@ import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -32,6 +33,11 @@ public class DiversificationServiceImpl implements DiversificationService {
     public DiversificationCompleteData getAllDiversificationInfo(String portfolioId) {
 
         List<Holdings> holdings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
+        Map<String, MarketData> marketByTicker = marketDataService.getMarketDataForDiversification(
+                holdings.stream().map(Holdings::getTicker).collect(Collectors.toSet()));
+        Set<String> customTickers = holdings.stream().filter(h -> h.getAssetType() == Assets.CUSTOM)
+                .map(h -> h.getTicker().toUpperCase()).collect(Collectors.toSet());
+        Map<String, CustomAsset> customByTicker = customAssetService.findForDiversification(portfolioId, customTickers);
         // DiversificationUtils diversificationUtils = new DiversificationUtils();
         DiversificationCompleteData diversificationCompleteData = new DiversificationCompleteData();
         Map<String, BigDecimal> amountByCountry = new HashMap<>();
@@ -39,7 +45,7 @@ public class DiversificationServiceImpl implements DiversificationService {
         Map<String, BigDecimal> amountByIndustry = new HashMap<>();
         Map<String, BigDecimal> amountByStock = new HashMap<>();
         for (Holdings holding : holdings) {
-            MarketData marketData = marketDataService.getMarketDataByTicker(holding.getTicker());
+            MarketData marketData = marketByTicker.get(holding.getTicker());
             if (marketData == null || marketData.getPrice() == null) {
                 continue;
             }
@@ -54,13 +60,11 @@ public class DiversificationServiceImpl implements DiversificationService {
                 amountByIndustry.merge(industry, holdingValue, BigDecimal::add);
             } else if (holding.getAssetType() == Assets.CUSTOM) {
                 // Look up country and assetType label from the CustomAsset definition
-                Optional<CustomAsset> customAssetOpt = customAssetService.findOptionalByPortfolioIdAndTicker(portfolioId, holding.getTicker());
-                String country = customAssetOpt
-                        .map(ca -> ca.getCountry() != null ? ca.getCountry() : "Unknown")
-                        .orElse("Unknown");
-                String sector = customAssetOpt
-                        .map(ca -> ca.getAssetType() != null ? ca.getAssetType() : "Custom")
-                        .orElse("Custom");
+                CustomAsset customAsset = customByTicker.get(holding.getTicker().toUpperCase());
+                String country = customAsset != null && customAsset.getCountry() != null
+                        ? customAsset.getCountry() : "Unknown";
+                String sector = customAsset != null && customAsset.getAssetType() != null
+                        ? customAsset.getAssetType() : "Custom";
                 amountByCountry.merge(country, holdingValue, BigDecimal::add);
                 amountBySector.merge(sector, holdingValue, BigDecimal::add);
             } else {

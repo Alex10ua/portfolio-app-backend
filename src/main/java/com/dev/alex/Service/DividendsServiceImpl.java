@@ -5,7 +5,6 @@ import com.dev.alex.Model.Holdings;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.Dividend;
 import com.dev.alex.Model.NonDbModel.DividendInfoCompleteData;
-import com.dev.alex.Model.NonDbModel.Splits;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Service.Dividends.DividendUtils;
 import com.dev.alex.Service.Interface.DividendsService;
@@ -45,46 +44,38 @@ public class DividendsServiceImpl implements DividendsService {
         // TODO: Implement All time stock dividends only by transaction buy and sell
         DividendInfoCompleteData dividendInfoCompleteData = new DividendInfoCompleteData();
         List<Holdings> allHolding = holdingService.getAllHoldingsByPortfolioId(portfolioId);
-        DividendUtils dividendUtils = new DividendUtils();
         List<Map<String, BigDecimal>> divMapList = new ArrayList<>();
-        Map<String, List<Dividend>> holdingsDividends = new HashMap<>();
-        Map<String, List<Transactions>> holdingsTransactions = new HashMap<>();
-        Map<String, List<Splits>> holdingsSplits = new HashMap<>();
-        List<String> tickers = new ArrayList<>();
+        Map<String, BigDecimal> dividendsByMonth = new TreeMap<>();
+        Map<String, List<Transactions>> transactionsByTicker = groupTransactions(
+                transactionService.findAllByPortfolioId(portfolioId));
+        Map<String, MarketData> marketByTicker = marketDataService.getMarketDataForIncome(
+                allHolding.stream().map(Holdings::getTicker).collect(Collectors.toSet()));
+        boolean hasDividendData = false;
         BigDecimal allYearlyDividends = BigDecimal.ZERO;
 
         for (Holdings holding : allHolding) {
             // get market data dividends for stock
             if (holding.getAssetType().equals(Assets.STOCK)) {
-                MarketData marketData = marketDataService.getMarketDataByTicker((holding.getTicker()));
-                if (marketData.getDividends() != null && !marketData.getDividends().isEmpty()) {
-                    tickers.add(holding.getTicker());
-                    // get from holdings list of transaction for stock in holding
-                    List<Transactions> transactionsList = transactionService.findAllByPortfolioIdAndTicker(portfolioId,
-                            holding.getTicker());
-                    holdingsTransactions.put(holding.getTicker(), transactionsList);// map for calculation of dividends
-                                                                                    // by month
-                    List<Dividend> dividendList = marketData.getDividends();
-                    List<Splits> splitsList = marketData.getSplits();
-                    holdingsDividends.put(holding.getTicker(), dividendList);
-                    holdingsSplits.put(holding.getTicker(), splitsList);
+                MarketData marketData = marketByTicker.get(holding.getTicker());
+                if (marketData != null && marketData.getDividends() != null && !marketData.getDividends().isEmpty()) {
+                    hasDividendData = true;
                     if (marketData.getYearlyDividend() != null) {
                         allYearlyDividends = allYearlyDividends
                                 .add(marketData.getYearlyDividend().multiply(holding.getQuantity()));
                     }
                     // move to DividendsUtils
-                    BigDecimal divForStock = dividendUtils.calculateAllDividendsByStockAuto(dividendList,
-                            transactionsList, splitsList);
+                    DividendUtils.DividendTotals totals = dividendUtils.calculateDividends(marketData.getDividends(),
+                            transactionsByTicker.get(holding.getTicker()), marketData.getSplits());
+                    totals.byMonth().forEach((month, amount) -> dividendsByMonth.merge(month, amount, BigDecimal::add));
                     Map<String, BigDecimal> allDivForStock = new HashMap<>();
-                    allDivForStock.put(holding.getTicker(), divForStock);
+                    allDivForStock.put(holding.getTicker(), totals.total());
                     divMapList.add(allDivForStock);
                 }
             }
         }
-        if (!holdingsDividends.isEmpty()) {
+        if (hasDividendData) {
             dividendInfoCompleteData.setTickerAmount(divMapList);
-            dividendInfoCompleteData.setAmountByMonth(dividendUtils.calculateDividendsPerMonthAuto(holdingsTransactions,
-                    holdingsDividends, holdingsSplits, tickers));
+            dividendInfoCompleteData.setAmountByMonth(dividendsByMonth);
             dividendInfoCompleteData.setYearlyCombineDividendsProjection(allYearlyDividends);
         }
         return dividendInfoCompleteData;
@@ -110,10 +101,15 @@ public class DividendsServiceImpl implements DividendsService {
         List<Transactions> allPortfolioTransactions = transactionService.findAllByPortfolioId(portfolioId);
 
         List<Map<String, BigDecimal>> receivedDividendsPerTickerList = new ArrayList<>();
-        Map<String, List<Dividend>> marketDividendsByTicker = new HashMap<>();
-        Map<String, List<Transactions>> transactionsByTickerMap = new HashMap<>(); // Will store sorted transactions
-        Map<String, List<Splits>> marketSplitsByTicker = new HashMap<>(); // Will store sorted splits
-        List<String> tickersWithDividendData = new ArrayList<>(); // Tickers for which we found dividend market data
+        Map<String, List<Transactions>> transactionsByTicker = groupTransactions(allPortfolioTransactions);
+        List<Holdings> currentHoldings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
+        Set<String> marketTickers = new HashSet<>(transactionsByTicker.keySet());
+        if (currentHoldings != null) {
+            currentHoldings.stream().filter(h -> Assets.STOCK.equals(h.getAssetType()))
+                    .map(Holdings::getTicker).filter(Objects::nonNull).forEach(marketTickers::add);
+        }
+        // One projected market read serves both the historical income and today's projection.
+        Map<String, MarketData> marketByTicker = marketDataService.getMarketDataForIncome(marketTickers);
 
         if (allPortfolioTransactions == null || allPortfolioTransactions.isEmpty()) {
             // No transactions, so no historical dividends. Initialize and return.
@@ -122,58 +118,39 @@ public class DividendsServiceImpl implements DividendsService {
             dividendInfoCompleteData.setAmountByMonth(new HashMap<>());
             dividendInfoCompleteData.setAmountByMonthByCurrency(new HashMap<>());
             dividendInfoCompleteData.setDisplayCurrency("USD");
-            calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
+            calculateAndSetYearlyProjection(dividendInfoCompleteData, currentHoldings, marketByTicker);
             dividendInfoCompleteData.setFxRates(fxRateService.getAllRatesAsMap());
             return dividendInfoCompleteData;
         }
-
-        // 2. Identify unique tickers from transactions
-        Set<String> uniqueTickers = allPortfolioTransactions.stream()
-                .map(Transactions::getTicker)
-                .filter(Objects::nonNull) // Ensure ticker is not null
-                .collect(Collectors.toSet());
 
         // 3. Process each unique ticker.
         // Dividend amounts come from MarketData, so the native currency is the
         // MarketData currency (e.g. "GBp" pence) — NOT the transaction currency
         // (e.g. "GBP" pounds). Amounts are reported in that native currency and
         // never converted here; the client applies FX for the currency it displays.
-        Map<String, BigDecimal> rawTickerAmount = new HashMap<>(); // native-currency totals
         Map<String, String> tickerNativeCurrency = new HashMap<>(); // ticker → native currency as quoted
         Set<String> marketCurrencies = new HashSet<>(); // normalized native currencies (GBp/GBx → GBP)
+        Map<String, Map<String, BigDecimal>> amountByMonthByCurrency = new HashMap<>();
+        Map<String, BigDecimal> amountByMonth = new TreeMap<>();
 
-        for (String ticker : uniqueTickers) {
-            MarketData marketData = marketDataService.getMarketDataByTicker(ticker);
+        for (Map.Entry<String, List<Transactions>> group : transactionsByTicker.entrySet()) {
+            String ticker = group.getKey();
+            MarketData marketData = marketByTicker.get(ticker);
 
             if (marketData != null && marketData.getDividends() != null && !marketData.getDividends().isEmpty()) {
-                tickersWithDividendData.add(ticker);
-
-                // Filter transactions for the current ticker AND SORT THEM BY DATE
-                List<Transactions> currentTickerTransactions = allPortfolioTransactions.stream()
-                        .filter(t -> ticker.equals(t.getTicker()))
-                        .sorted(Comparator.comparing(Transactions::getDate, Comparator.nullsLast(Comparator.naturalOrder()))) // ESSENTIAL
-                        .collect(Collectors.toList());
-
-                transactionsByTickerMap.put(ticker, currentTickerTransactions);
-                marketDividendsByTicker.put(ticker, marketData.getDividends());
-
                 String nativeCurrency = marketData.getCurrency() != null ? marketData.getCurrency() : "USD";
                 tickerNativeCurrency.put(ticker, nativeCurrency);
                 marketCurrencies.add(normalizeCurrency(nativeCurrency));
 
-                // Undated splits are dropped: a null date cannot be placed before or after a trade
-                List<Splits> tickerSplits = marketData.getSplits() == null ? new ArrayList<>()
-                        : marketData.getSplits().stream()
-                                .filter(s -> s != null && s.getSplitDate() != null)
-                                .sorted(Comparator.comparing(Splits::getSplitDate))
-                                .collect(Collectors.toList());
-                marketSplitsByTicker.put(ticker, tickerSplits);
-
-                // Total received dividends for this stock in its native currency
-                rawTickerAmount.put(ticker, dividendUtils.calculateAllDividendsByStockAuto(
-                        marketData.getDividends(),
-                        currentTickerTransactions,
-                        tickerSplits));
+                DividendUtils.DividendTotals totals = dividendUtils.calculateDividends(
+                        marketData.getDividends(), group.getValue(), marketData.getSplits());
+                receivedDividendsPerTickerList.add(Collections.singletonMap(ticker, totals.total()));
+                Map<String, BigDecimal> currencyMonths = amountByMonthByCurrency
+                        .computeIfAbsent(nativeCurrency, key -> new TreeMap<>());
+                totals.byMonth().forEach((month, amount) -> {
+                    currencyMonths.merge(month, amount, BigDecimal::add);
+                    amountByMonth.merge(month, amount, BigDecimal::add);
+                });
             }
         }
 
@@ -184,41 +161,25 @@ public class DividendsServiceImpl implements DividendsService {
                 : "USD";
         dividendInfoCompleteData.setDisplayCurrency(displayCurrency);
 
-        for (String ticker : tickersWithDividendData) {
-            Map<String, BigDecimal> receivedAmountMap = new HashMap<>();
-            receivedAmountMap.put(ticker, rawTickerAmount.getOrDefault(ticker, BigDecimal.ZERO));
-            receivedDividendsPerTickerList.add(receivedAmountMap);
-        }
-
         // 4. Set results in DividendInfoCompleteData
         dividendInfoCompleteData.setTickerAmount(receivedDividendsPerTickerList);
         dividendInfoCompleteData.setTickerCurrency(tickerNativeCurrency);
 
-        // Monthly income, one series per native currency. Running the month
-        // calculation per currency group (divisor 1 = no scaling) keeps each
-        // series in its own units so the client can convert them independently.
-        Map<String, Map<String, BigDecimal>> amountByMonthByCurrency = new HashMap<>();
-        Map<String, BigDecimal> amountByMonth = new TreeMap<>();
-        Map<String, List<String>> tickersByCurrency = tickersWithDividendData.stream()
-                .collect(Collectors.groupingBy(t -> tickerNativeCurrency.getOrDefault(t, "USD")));
-        for (Map.Entry<String, List<String>> group : tickersByCurrency.entrySet()) {
-            Map<String, BigDecimal> months = dividendUtils.calculateDividendsPerMonthAuto(
-                    transactionsByTickerMap,
-                    marketDividendsByTicker,
-                    marketSplitsByTicker,
-                    group.getValue(),
-                    Collections.emptyMap());
-            amountByMonthByCurrency.put(group.getKey(), months);
-            months.forEach((month, amount) -> amountByMonth.merge(month, amount, BigDecimal::add));
-        }
+        // Each monthly series remains native; the frontend converts before combining currencies.
         dividendInfoCompleteData.setAmountByMonthByCurrency(amountByMonthByCurrency);
         dividendInfoCompleteData.setAmountByMonth(amountByMonth);
 
         // 5. Calculate and set yearly dividend projection based on *current* holdings
-        calculateAndSetYearlyProjection(dividendInfoCompleteData, portfolioId);
+        calculateAndSetYearlyProjection(dividendInfoCompleteData, currentHoldings, marketByTicker);
 
         dividendInfoCompleteData.setFxRates(fxRateService.getAllRatesAsMap());
         return dividendInfoCompleteData;
+    }
+
+    private Map<String, List<Transactions>> groupTransactions(List<Transactions> transactions) {
+        if (transactions == null) return Collections.emptyMap();
+        return transactions.stream().filter(t -> t != null && t.getTicker() != null)
+                .collect(Collectors.groupingBy(Transactions::getTicker));
     }
 
     /** GBp/GBx pence collapse to GBP for display-currency purposes. */
@@ -233,8 +194,7 @@ public class DividendsServiceImpl implements DividendsService {
      * pence. The flat total is the unconverted sum, exact only mono-currency.
      */
     private void calculateAndSetYearlyProjection(DividendInfoCompleteData dividendInfoCompleteData,
-            String portfolioId) {
-        List<Holdings> currentHoldings = holdingService.getAllHoldingsByPortfolioId(portfolioId);
+            List<Holdings> currentHoldings, Map<String, MarketData> marketByTicker) {
         Map<String, BigDecimal> projectionByCurrency = new HashMap<>();
 
         if (currentHoldings == null) {
@@ -243,15 +203,12 @@ public class DividendsServiceImpl implements DividendsService {
             return;
         }
 
-        Map<String, MarketData> marketDataCache = new HashMap<>();
-
         for (Holdings holding : currentHoldings) {
             if (Assets.STOCK.equals(holding.getAssetType()) &&
                     holding.getQuantity() != null &&
                     holding.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
 
-                MarketData md = marketDataCache.computeIfAbsent(holding.getTicker(),
-                        tickerKey -> marketDataService.getMarketDataByTicker(tickerKey));
+                MarketData md = marketByTicker.get(holding.getTicker());
 
                 if (md != null && md.getYearlyDividend() != null) {
                     BigDecimal projected = md.getYearlyDividend().multiply(holding.getQuantity());

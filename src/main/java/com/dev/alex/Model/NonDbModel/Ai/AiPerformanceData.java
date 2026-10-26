@@ -28,14 +28,19 @@ public record AiPerformanceData(
         Map<String, BigDecimal> totalInvestedByCurrency,
         /** Open positions at the latest price, per quote currency (may be GBp). */
         Map<String, BigDecimal> currentValueByCurrency,
-        /** Open positions at average cost, per book currency. Unrealized = converted value − this. */
+        /** Remaining FIFO cost including BUY fees, per book currency. Unrealized = converted value − this. */
         Map<String, BigDecimal> openCostBasisByCurrency,
-        /** FIFO realized profit, per SELL currency. */
+        /** FIFO proceeds and consumed purchase cost, in their original currencies. */
         Map<String, BigDecimal> realizedPnLByCurrency,
+        /** All BUY/SELL fees, in their original currencies. */
+        Map<String, BigDecimal> commissionsByCurrency,
+        /** Fees allocated to sold quantities; already included in realized P&L. */
+        Map<String, BigDecimal> realizedCommissionsByCurrency,
         /** DIVIDEND transactions, per transaction currency. */
         Map<String, BigDecimal> totalDividendsByCurrency,
         List<Point> timeSeries) {
 
-    public record Point(LocalDate date, Map<String, BigDecimal> valueByCurrency) {
+    public record Point(LocalDate date, Map<String, BigDecimal> valueByCurrency,
+                        List<String> estimatedPriceTickers) {
     }
 }

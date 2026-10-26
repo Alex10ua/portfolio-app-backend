@@ -75,6 +75,8 @@ public class AiPerformanceController {
                 raw == null ? null : raw.getCurrentValueByCurrency(),
                 raw == null ? null : raw.getOpenCostBasisByCurrency(),
                 raw == null ? null : raw.getRealizedPnLByCurrency(),
+                raw == null ? null : raw.getCommissionsByCurrency(),
+                raw == null ? null : raw.getRealizedCommissionsByCurrency(),
                 raw == null ? null : raw.getTotalDividendsByCurrency(),
                 series);
 
@@ -155,7 +157,7 @@ public class AiPerformanceController {
     private static List<AiPerformanceData.Point> toPoints(List<PerformancePoint> points) {
         List<AiPerformanceData.Point> out = new ArrayList<>(points.size());
         for (PerformancePoint p : points) {
-            out.add(new AiPerformanceData.Point(p.getDate(), p.getValueByCurrency()));
+            out.add(new AiPerformanceData.Point(p.getDate(), p.getValueByCurrency(), p.getEstimatedPriceTickers()));
         }
         return out;
     }

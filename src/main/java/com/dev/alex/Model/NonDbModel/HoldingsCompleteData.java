@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.Map;
 
 
 @Data
@@ -24,6 +25,10 @@ public class HoldingsCompleteData {
     private BigDecimal exactShareAmount;
     private BigDecimal costPerShare;
     private BigDecimal costBasis;
+    /** Remaining BUY commissions, already included in costBasis; never subtract them twice. */
+    private BigDecimal commissions;
+    private Map<String, BigDecimal> costBasisByCurrency;
+    private Map<String, BigDecimal> commissionsByCurrency;
     private BigDecimal currentTotalValue;
     private BigDecimal currentShareValue;
     private BigDecimal dividend;

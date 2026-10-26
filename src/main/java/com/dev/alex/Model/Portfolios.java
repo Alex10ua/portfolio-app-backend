@@ -5,6 +5,7 @@ import java.util.Date;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.index.Indexed;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -17,6 +18,7 @@ import lombok.NoArgsConstructor;
 public class Portfolios {
     @Id
     private String portfolioId;
+    @Indexed(name = "portfolios_username")
     private String username;
     private String portfolioName;
     private String description;
