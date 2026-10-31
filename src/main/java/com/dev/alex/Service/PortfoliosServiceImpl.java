@@ -13,6 +13,8 @@ import com.dev.alex.Repository.ImportBatchRepository;
 import com.dev.alex.Repository.MarketDataRepository;
 import com.dev.alex.Repository.PortfolioRepository;
 import com.dev.alex.Repository.RealizedPnlCacheRepository;
+import com.dev.alex.Repository.RealEstatePropertyRepository;
+import com.dev.alex.Repository.MortgageRepository;
 import com.dev.alex.Repository.TickerNotesRepository;
 import com.dev.alex.Repository.TickerTagsRepository;
 import com.dev.alex.Repository.TransactionsRepository;
@@ -49,6 +51,10 @@ public class PortfoliosServiceImpl implements PortfolioService {
     private WatchlistRepository watchlistRepository;
     @Autowired
     private DividendReceiptRepository dividendReceiptRepository;
+    @Autowired
+    private RealEstatePropertyRepository realEstatePropertyRepository;
+    @Autowired
+    private MortgageRepository mortgageRepository;
 
     /**
      * Deletes the portfolio and every document keyed by its portfolioId:
@@ -79,6 +85,8 @@ public class PortfoliosServiceImpl implements PortfolioService {
         tickerNotesRepository.deleteAllByPortfolioId(portfolioId);
         watchlistRepository.deleteAllByPortfolioId(portfolioId);
         dividendReceiptRepository.deleteAllByPortfolioId(portfolioId);
+        mortgageRepository.deleteAllByPortfolioId(portfolioId);
+        realEstatePropertyRepository.deleteAllByPortfolioId(portfolioId);
         realizedPnlCacheRepository.deleteById(portfolioId);
         portfolioRepository.deleteById(portfolioId); // _id == portfolioId
     }

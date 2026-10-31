@@ -33,6 +33,8 @@ public class UserSettings {
         private List<Map<String, Object>> tableConfig;
         private List<AllocationTarget> targets; // desired % of portfolio per ticker
         private String chartRange;      // "1M" | "3M" | "6M" | "YTD" | "1Y" | "ALL"
+        private String wealthChartView; // "COMBINED" | "INVESTMENTS"
+        private Boolean hideRealEstate; // property left out of this portfolio's nav and totals; records kept
         private String sortBy;          // holdings-table column key
         private String sortOrder;       // "asc" | "desc"
         private String assetFilter;     // "ALL" or an Assets enum name
