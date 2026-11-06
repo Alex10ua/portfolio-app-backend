@@ -40,10 +40,16 @@ public class RealEstateServiceImpl implements RealEstateService {
     private static final String LEGACY_INDEX_MESSAGE =
             "The database still allows only one active loan per property; restart the backend so it can remove the old index";
 
+    /**
+     * attributedMortgagePrincipal is what is owed: a building savings loan counts net of its savings,
+     * which are bound to repay it, so the switch moves no equity. attributedBuildingSavings is how much
+     * that netting took off, null when no loan has savings.
+     */
     public record PropertyView(RealEstateProperty property, List<Mortgage> mortgages,
             RealEstateProperty.Valuation latestValuation, BigDecimal fullValue, BigDecimal ownedValue,
             BigDecimal attributedMortgagePrincipal, BigDecimal equity, boolean complete,
-            Map<String, MortgageCalculationService.Summary> loanSummaries, DebtStatus debt) {}
+            Map<String, MortgageCalculationService.Summary> loanSummaries, DebtStatus debt,
+            BigDecimal attributedBuildingSavings) {}
     /**
      * The open loans taken together, null when none is open: the least certain balance, every
      * warning (named by loan when there are several), and the installments still being paid.
@@ -97,7 +103,7 @@ public class RealEstateServiceImpl implements RealEstateService {
         BigDecimal full = valuation == null ? null : valuation.getFullPropertyValue();
         BigDecimal owned = full == null ? null : full.multiply(property.getOwnershipShare());
         boolean debtComplete = !"MORTGAGE_SETUP_PENDING".equals(property.getFinancingStatus());
-        BigDecimal attributed = ZERO;
+        BigDecimal attributed = ZERO, savings = null;
         Map<String, MortgageCalculationService.Summary> summaries = new LinkedHashMap<>();
         for (Mortgage loan : linked) {
             if (asOf.isBefore(loan.getLoanStartDate())) continue;
@@ -107,7 +113,13 @@ public class RealEstateServiceImpl implements RealEstateService {
             // full bank balance is unavailable. Its summary still exposes the missing records.
             if (balance.principalBalance() == null) {
                 if (allocation.signum() != 0) debtComplete = false;
-            } else attributed = attributed.add(balance.principalBalance().multiply(allocation));
+            } else {
+                attributed = attributed.add(balance.netDebt().multiply(allocation));
+                if (balance.savingsBalance() != null) {
+                    BigDecimal counted = balance.principalBalance().subtract(balance.netDebt());
+                    savings = Objects.requireNonNullElse(savings, ZERO).add(counted.multiply(allocation));
+                }
+            }
             if (loan.getCloseDate() == null || !loan.getCloseDate().isBefore(asOf)) {
                 summaries.put(loan.getId(), calculations.summarize(loan, asOf, includeProjection));
             }
@@ -116,7 +128,8 @@ public class RealEstateServiceImpl implements RealEstateService {
         boolean complete = included && full != null && debtComplete;
         BigDecimal equity = complete ? owned.subtract(attributed) : null;
         return new PropertyView(property, linked, valuation, full, owned,
-                debtComplete ? attributed : null, equity, complete, summaries, debtStatus(linked, summaries));
+                debtComplete ? attributed : null, equity, complete, summaries, debtStatus(linked, summaries),
+                debtComplete ? savings : null);
     }
 
     private static final List<String> CONFIDENCE = List.of("CONFIRMED", "CARRIED", "ESTIMATED", "PAUSED", "UNKNOWN");
@@ -338,6 +351,13 @@ public class RealEstateServiceImpl implements RealEstateService {
         applyMortgage(loan, property, command, true);
         if (command.openingBalance() == null) throw fail(400, "An opening bank balance is required");
         loan.getBalanceCheckpoints().add(balanceValue(loan, command.openingBalance(), null));
+        if (loan.getBuildingSavings() != null) {
+            // The savings account is read off the same statement as the bridging loan.
+            loan.getBuildingSavings().getSavingsCheckpoints().add(new Mortgage.SavingsCheckpoint(UUID.randomUUID().toString(),
+                    command.openingBalance().asOfDate(), money(command.buildingSavings().savingsBalance(), "Savings balance", false),
+                    "BANK_STATEMENT", null, now()));
+            validSwitch(loan);
+        }
         if (command.ratePeriod() != null) loan.getRatePeriods().add(rateValue(loan, command.ratePeriod(), null));
         loan.setStatus("ACTIVE");
         loan.setCreatedAt(now());
@@ -375,7 +395,8 @@ public class RealEstateServiceImpl implements RealEstateService {
                 command.maturityDate() == null ? loan.getMaturityDate() : command.maturityDate(),
                 command.paymentDay() == null ? loan.getPaymentDay() : command.paymentDay(),
                 command.debtAllocationShare() == null ? loan.getDebtAllocationShare() : command.debtAllocationShare(),
-                command.balanceTrackingMode() == null ? loan.getBalanceTrackingMode() : command.balanceTrackingMode(), null, null);
+                command.balanceTrackingMode() == null ? loan.getBalanceTrackingMode() : command.balanceTrackingMode(), null, null,
+                command.buildingSavings());
         applyMortgage(loan, requireProperty(portfolioId, propertyId), merged, false);
         save(loan, receiptKey, command);
         return getProperty(portfolioId, propertyId);
@@ -392,6 +413,16 @@ public class RealEstateServiceImpl implements RealEstateService {
             boolean lower = Boolean.TRUE.equals(command.lowerInstallment());
             if (lower && extra.signum() <= 0) throw fail(400, "Lowering the installment needs an extra principal payment");
             BigDecimal newInstallment = lower && command.newInstallment() != null ? money(command.newInstallment(), "New installment", false) : null;
+            // A building savings loan's savings account takes deposits until the switch; its bridging installment is interest only.
+            BigDecimal intoSavings = money(command.savingsPaid(), "Savings deposit", true);
+            LocalDate switchDate = MortgageCalculationService.switchDate(loan);
+            if (intoSavings.signum() > 0 && loan.getBuildingSavings() == null) throw fail(400, "Only a building savings loan has a savings account");
+            if (intoSavings.signum() > 0 && switchDate != null && command.paymentDate().isAfter(switchDate)) {
+                throw fail(400, "Savings deposits end at the switch to the building loan");
+            }
+            if (lower && loan.getBuildingSavings() != null && (switchDate == null || !command.paymentDate().isAfter(switchDate))) {
+                throw fail(400, "The bridging loan's installment is interest only; lowering an installment applies once the building loan starts");
+            }
             LocalDate scheduledDue = command.scheduledDueDate() == null && principal.signum() > 0 && dueOn(loan, command.paymentDate())
                     ? command.paymentDate() : command.scheduledDueDate();
             if (scheduledDue != null) {
@@ -413,7 +444,7 @@ public class RealEstateServiceImpl implements RealEstateService {
             if (paymentId != null) beforePayment.getPayments().removeIf(p -> paymentId.equals(p.getId()));
             // Suppress a matching inferred installment while measuring the principal available to this actual payment.
             if (scheduledDue != null) beforePayment.getPayments().add(new Mortgage.Payment("validation",
-                    command.paymentDate(), scheduledDue, ZERO, ZERO, ZERO, ZERO, null, now(), null, null));
+                    command.paymentDate(), scheduledDue, ZERO, ZERO, ZERO, ZERO, null, now(), null, null, null));
             boolean endOfDayCheckpoint = loan.getBalanceCheckpoints().stream()
                     .anyMatch(c -> c.getAsOfDate().equals(command.paymentDate()));
             var before = calculations.balanceAt(beforePayment, endOfDayCheckpoint
@@ -453,6 +484,7 @@ public class RealEstateServiceImpl implements RealEstateService {
             payment.setNote(optional(command.note(), 2000));
             payment.setLowerInstallment(lower ? Boolean.TRUE : null);
             payment.setNewInstallment(newInstallment);
+            payment.setSavingsPaid(intoSavings.signum() > 0 ? intoSavings : null);
             payment.setRecordedAt(now());
             if (creating) loan.getPayments().add(payment);
             loan.getPayments().sort(Comparator.comparing(Mortgage.Payment::getPaymentDate));
@@ -473,6 +505,33 @@ public class RealEstateServiceImpl implements RealEstateService {
             }
             loan.getBalanceCheckpoints().add(value);
             loan.getBalanceCheckpoints().sort(Comparator.comparing(Mortgage.BalanceCheckpoint::getAsOfDate));
+        });
+    }
+
+    /** A building savings loan's savings account balance from a statement; before the switch only. */
+    public PropertyView savingsCheckpoint(String portfolioId, String propertyId, String mortgageId, String checkpointId,
+                                          SavingsCommand command, String key) {
+        return mutateLoan(portfolioId, propertyId, mortgageId, command.version(),
+                "savings:" + Objects.toString(checkpointId, "new"), command, key, loan -> {
+            Mortgage.BuildingSavings building = loan.getBuildingSavings();
+            if (building == null) throw fail(400, "Only a building savings loan has a savings account");
+            validLoanActualDate(loan, command.asOfDate(), "Savings statement date");
+            LocalDate switchDate = MortgageCalculationService.switchDate(loan);
+            if (switchDate != null && command.asOfDate().isAfter(switchDate)) {
+                throw fail(400, "After the switch the savings have repaid the bridging loan; record the building loan's bank balance instead");
+            }
+            if (building.getSavingsCheckpoints().size() >= MAX_EVENTS && checkpointId == null) throw fail(400, "Savings history limit reached");
+            Mortgage.SavingsCheckpoint value = new Mortgage.SavingsCheckpoint(checkpointId == null ? UUID.randomUUID().toString() : checkpointId,
+                    command.asOfDate(), money(command.balance(), "Savings balance", false),
+                    choice(command.source(), Set.of("BANK_STATEMENT", "USER_CONFIRMED"), "Balance source", "BANK_STATEMENT"),
+                    optional(command.note(), 2000), now());
+            if (building.getSavingsCheckpoints().stream().anyMatch(s -> !s.getId().equals(value.getId())
+                    && s.getAsOfDate().equals(value.getAsOfDate()))) throw fail(409, "A savings statement already exists on this date; edit it instead");
+            if (checkpointId != null && !building.getSavingsCheckpoints().removeIf(s -> checkpointId.equals(s.getId()))) {
+                throw fail(404, "Savings statement not found");
+            }
+            building.getSavingsCheckpoints().add(value);
+            building.getSavingsCheckpoints().sort(Comparator.comparing(Mortgage.SavingsCheckpoint::getAsOfDate));
         });
     }
 
@@ -609,7 +668,7 @@ public class RealEstateServiceImpl implements RealEstateService {
                 throw fail(400, "Extra principal exceeds the available principal balance");
             }
             scenario.getPayments().add(new Mortgage.Payment("preview", effective, null, ZERO,
-                    money(command.extraPrincipalPaid(), "Extra principal", false), ZERO, ZERO, "Unsaved scenario", now(), null, null));
+                    money(command.extraPrincipalPaid(), "Extra principal", false), ZERO, ZERO, "Unsaved scenario", now(), null, null, null));
         }
         return new Preview(calculations.summarizeScenario(scenario, effective),
                 calculations.scheduleScenario(scenario, effective, scenario.getMaturityDate(), today()));
@@ -633,18 +692,31 @@ public class RealEstateServiceImpl implements RealEstateService {
         }
         BigDecimal amount = money(command.amount(), "Extra principal", false);
         Mortgage base = copyLoan(loan);
-        Mortgage.RatePeriod latest = base.getRatePeriods().stream().max(Comparator.comparing(Mortgage.RatePeriod::getFixedUntil)).orElse(null);
-        if (latest == null || latest.getFixedUntil().isBefore(effective)) throw fail(409, "Record the rate that applies on that date first");
-        LocalDate assumedAfter = latest.getFixedUntil().isBefore(base.getMaturityDate()) ? latest.getFixedUntil() : null;
-        if (assumedAfter != null) latest.setFixedUntil(base.getMaturityDate());
+        LocalDate assumedAfter = null;
+        BigDecimal assumedRate = null;
+        if (base.getBuildingSavings() != null) {
+            // The building loan's rate is guaranteed to the end, so nothing is assumed; before it the installment is interest only.
+            LocalDate switchDate = MortgageCalculationService.switchDate(base);
+            if (switchDate == null || !effective.isAfter(switchDate)) {
+                throw fail(409, "Until the switch to the building loan the installment is interest only; extra principal then only lowers the interest");
+            }
+        } else {
+            Mortgage.RatePeriod latest = base.getRatePeriods().stream().max(Comparator.comparing(Mortgage.RatePeriod::getFixedUntil)).orElse(null);
+            if (latest == null || latest.getFixedUntil().isBefore(effective)) throw fail(409, "Record the rate that applies on that date first");
+            if (latest.getFixedUntil().isBefore(base.getMaturityDate())) {
+                assumedAfter = latest.getFixedUntil();
+                assumedRate = latest.getAnnualNominalRatePercent();
+                latest.setFixedUntil(base.getMaturityDate());
+            }
+        }
         BigDecimal balance = calculations.balanceAt(base, effective).principalBalance();
         if (balance == null || amount.compareTo(balance) > 0) throw fail(400, "Extra principal exceeds the balance on that date");
         Mortgage keep = copyLoan(base), lower = copyLoan(base);
-        keep.getPayments().add(new Mortgage.Payment("preview-keep", effective, null, ZERO, amount, ZERO, ZERO, "Unsaved scenario", now(), null, null));
-        lower.getPayments().add(new Mortgage.Payment("preview-lower", effective, null, ZERO, amount, ZERO, ZERO, "Unsaved scenario", now(), true, null));
+        keep.getPayments().add(new Mortgage.Payment("preview-keep", effective, null, ZERO, amount, ZERO, ZERO, "Unsaved scenario", now(), null, null, null));
+        lower.getPayments().add(new Mortgage.Payment("preview-lower", effective, null, ZERO, amount, ZERO, ZERO, "Unsaved scenario", now(), true, null, null));
         rebaseLaterRates(lower, effective, day -> calculations.summarizeScenario(lower, day).balance().principalBalance());
         return new ExtraPaymentPreview(date, amount, outcome(base, effective), outcome(keep, effective), outcome(lower, effective),
-                assumedAfter == null ? null : latest.getAnnualNominalRatePercent(), assumedAfter);
+                assumedRate, assumedAfter);
     }
 
     private ExtraPaymentOutcome outcome(Mortgage scenario, LocalDate effective) {
@@ -736,6 +808,49 @@ public class RealEstateServiceImpl implements RealEstateService {
         loan.setDebtAllocationShare(allocation);
         loan.setBalanceTrackingMode(choice(command.balanceTrackingMode(), Set.of("STATEMENT_ONLY", "SCHEDULE_ESTIMATE"),
                 "Balance tracking mode", "SCHEDULE_ESTIMATE"));
+        var terms = command.buildingSavings();
+        if (terms == null) return; // an annuity loan, or on an update: unchanged
+        if (!creating && loan.getBuildingSavings() == null) throw fail(409, "The loan type cannot change once tracking has started");
+        // The allocation date and the building loan's figures stay editable: the bank confirms them only at the switch.
+        Mortgage.BuildingSavings building = loan.getBuildingSavings() == null ? new Mortgage.BuildingSavings() : loan.getBuildingSavings();
+        building.setMonthlyDeposit(money(terms.monthlyDeposit(), "Monthly savings deposit", false));
+        building.setSavingsRatePercent(terms.savingsRatePercent() == null ? null : percent(terms.savingsRatePercent(), "Savings interest rate"));
+        building.setAllocationDate(required(terms.allocationDate(), "Expected allocation date"));
+        building.setBuildingLoanRatePercent(percent(required(terms.buildingLoanRatePercent(), "Building loan rate"), "Building loan rate"));
+        BigDecimal payment = terms.buildingLoanPayment() == null ? null : money(terms.buildingLoanPayment(), "Building loan installment", false);
+        if (payment != null && payment.signum() == 0) throw fail(400, "Building loan installment must be more than zero; leave it blank to calculate it");
+        building.setBuildingLoanPayment(payment);
+        if (building.getSavingsCheckpoints() == null) building.setSavingsCheckpoints(new ArrayList<>());
+        loan.setBuildingSavings(building);
+        if (!creating) validSwitch(loan);
+    }
+
+    /**
+     * The switch must fall after the opening balance (a loan already past it is a plain annuity loan
+     * with the building loan's balance) and before the final installment, and no savings may be
+     * recorded after it: from then on the savings are spent.
+     */
+    private void validSwitch(Mortgage loan) {
+        LocalDate switchDate = MortgageCalculationService.switchDate(loan);
+        List<LocalDate> dues = calculations.dueDates(loan);
+        if (switchDate == null || dues.isEmpty() || !switchDate.isBefore(dues.getLast())) {
+            throw fail(400, "The switch to the building loan must come before the final installment");
+        }
+        LocalDate opening = loan.getBalanceCheckpoints().stream().map(Mortgage.BalanceCheckpoint::getAsOfDate)
+                .min(LocalDate::compareTo).orElse(null);
+        if (opening != null && !loan.getBuildingSavings().getAllocationDate().isAfter(opening)) {
+            throw fail(400, "This loan has already switched to its building loan; set it up as an annuity loan with the building loan's balance");
+        }
+        boolean savingsAfter = loan.getBuildingSavings().getSavingsCheckpoints().stream().anyMatch(s -> s.getAsOfDate().isAfter(switchDate))
+                || loan.getPayments().stream().anyMatch(p -> p.getSavingsPaid() != null && p.getSavingsPaid().signum() > 0
+                        && p.getPaymentDate().isAfter(switchDate));
+        if (savingsAfter) throw fail(409, "Savings are recorded after that switch date; correct them first");
+    }
+
+    private static BigDecimal percent(BigDecimal value, String label) {
+        BigDecimal result = money(value, label, false);
+        if (result.compareTo(new BigDecimal("100")) > 0) throw fail(400, label + " cannot exceed 100%");
+        return result;
     }
 
     private Mortgage.BalanceCheckpoint balanceValue(Mortgage loan, BalanceCommand command, String id) {
@@ -758,7 +873,10 @@ public class RealEstateServiceImpl implements RealEstateService {
         }
         BigDecimal rate = money(command.annualNominalRatePercent(), "Annual nominal rate", false);
         if (rate.compareTo(new BigDecimal("100")) > 0) throw fail(400, "Annual nominal rate cannot exceed 100%");
-        BigDecimal payment = command.monthlyPayment() == null ? null : money(command.monthlyPayment(), "Monthly installment", false);
+        // A bridging loan's rate repays nothing: its installment is the interest (plus the savings deposit), never an annuity.
+        LocalDate switchDate = MortgageCalculationService.switchDate(loan);
+        boolean bridging = loan.getBuildingSavings() != null && switchDate != null && from.isBefore(switchDate);
+        BigDecimal payment = command.monthlyPayment() == null || bridging ? null : money(command.monthlyPayment(), "Monthly installment", false);
         String source = payment == null ? "CALCULATED" : choice(command.paymentSource(), Set.of("BANK_AGREED", "CALCULATED"), "Payment source", "BANK_AGREED");
         var anchor = loan.getBalanceCheckpoints().stream().filter(c -> !c.getAsOfDate().isBefore(from) && !c.getAsOfDate().isAfter(until))
                 .min(Comparator.comparing(Mortgage.BalanceCheckpoint::getAsOfDate)).orElse(null);
@@ -766,7 +884,7 @@ public class RealEstateServiceImpl implements RealEstateService {
         BigDecimal principal = anchor == null ? balanceOn.apply(anchorDate) : anchor.getPrincipalBalance();
         int count = calculations.remainingPaymentCount(loan, anchorDate);
         // Principal does not move between installments, so a mid-month anchor gives the same annuity.
-        if (payment == null && principal != null && principal.signum() > 0 && count > 0) {
+        if (payment == null && !bridging && principal != null && principal.signum() > 0 && count > 0) {
             payment = calculations.monthlyPayment(principal, rate, count,
                     Math.max(0, Currency.getInstance(loan.getCurrency()).getDefaultFractionDigits()));
         }
@@ -863,7 +981,7 @@ public class RealEstateServiceImpl implements RealEstateService {
     private static String setupFingerprint(MortgageCommand c) {
         return fingerprint(new MortgageCommand(null, null, c.name(), c.lender(), c.currency(), c.originalPrincipal(),
                 c.loanStartDate(), c.firstPaymentDate(), c.maturityDate(), c.paymentDay(), c.debtAllocationShare(),
-                c.balanceTrackingMode(), c.openingBalance(), c.ratePeriod()));
+                c.balanceTrackingMode(), c.openingBalance(), c.ratePeriod(), c.buildingSavings()));
     }
 
     private static String canonical(Object value) {
@@ -966,6 +1084,12 @@ public class RealEstateServiceImpl implements RealEstateService {
             org.springframework.beans.BeanUtils.copyProperties(r, cloned);
             return cloned;
         }).collect(Collectors.toCollection(ArrayList::new)));
+        if (source.getBuildingSavings() != null) {
+            Mortgage.BuildingSavings building = new Mortgage.BuildingSavings();
+            org.springframework.beans.BeanUtils.copyProperties(source.getBuildingSavings(), building);
+            building.setSavingsCheckpoints(new ArrayList<>(source.getBuildingSavings().getSavingsCheckpoints()));
+            copy.setBuildingSavings(building);
+        }
         return copy;
     }
 }

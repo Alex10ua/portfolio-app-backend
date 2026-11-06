@@ -44,6 +44,8 @@ public class Mortgage {
     private List<RatePeriod> ratePeriods = new ArrayList<>();
     private List<BalanceCheckpoint> balanceCheckpoints = new ArrayList<>();
     private List<Payment> payments = new ArrayList<>();
+    /** Null for an annuity loan. Set for a building savings loan, which works differently until its switch. */
+    private BuildingSavings buildingSavings;
     private Instant createdAt;
     private Instant updatedAt;
     @Version private Long version;
@@ -92,5 +94,37 @@ public class Mortgage {
         private Boolean lowerInstallment;
         /** The bank's installment after that payment; null = the annuity of what is left over the installments left. */
         private BigDecimal newInstallment;
+        /** Paid into the building savings account (before the switch only); null = nothing. */
+        private BigDecimal savingsPaid;
+    }
+
+    /**
+     * A building savings loan such as PSS môjÚVER. Until the target amount is allocated it is a
+     * bridging loan (medziúver): interest only, while a monthly deposit builds up a savings account.
+     * On the switch the savings repay part of the bridging loan and the rest becomes a building loan
+     * (stavebný úver), repaid in installments at a rate fixed to the end.
+     */
+    @Data @AllArgsConstructor @NoArgsConstructor
+    public static class BuildingSavings {
+        private BigDecimal monthlyDeposit;
+        /** Credited monthly on the savings balance; null = none. */
+        private BigDecimal savingsRatePercent;
+        /** The expected allocation of the target amount; the switch happens on the first installment date from it. */
+        private LocalDate allocationDate;
+        private BigDecimal buildingLoanRatePercent;
+        /** The bank's building-loan installment; null = the annuity of what is left over the installments left. */
+        private BigDecimal buildingLoanPayment;
+        private List<SavingsCheckpoint> savingsCheckpoints = new ArrayList<>();
+    }
+
+    /** The savings account balance from a statement, end of day. */
+    @Data @AllArgsConstructor @NoArgsConstructor
+    public static class SavingsCheckpoint {
+        private String id;
+        private LocalDate asOfDate;
+        private BigDecimal balance;
+        private String source;
+        private String note;
+        private Instant recordedAt;
     }
 }

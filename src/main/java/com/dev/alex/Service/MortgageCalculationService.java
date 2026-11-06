@@ -27,6 +27,8 @@ import java.util.TreeSet;
  * a later bank checkpoint can restore a usable balance without inventing past payments.
  * Principal moves only on installments and recorded payments, so a balance read between
  * installments stands for its whole cycle; a loan paid out inside a cycle accrues from the payout.
+ * A building savings loan pays interest only, plus a savings deposit, until its switch; there its
+ * savings repay part of it and the rest amortizes at the building loan's rate, fixed to the end.
  */
 @Service
 public class MortgageCalculationService {
@@ -35,6 +37,8 @@ public class MortgageCalculationService {
     private static final BigDecimal TWELVE_HUNDRED = new BigDecimal("1200");
     private static final MathContext MC = MathContext.DECIMAL128;
     private static final int MAX_PAYMENTS = 1200;
+    /** The id of the building loan's rate period, which is derived from the loan rather than stored. */
+    public static final String BUILDING_LOAN_PERIOD = "building-loan";
     private static final String SPLIT_RATE_WARNING =
             "The rate changes inside a monthly cycle; record the bank's figures for that installment or a later bank balance";
     private final Clock clock;
@@ -47,20 +51,31 @@ public class MortgageCalculationService {
         this.clock = Objects.requireNonNull(clock);
     }
 
+    /** savingsBalance: a building savings loan's savings account, null for an annuity loan (and zero after its switch). */
     public record Balance(BigDecimal principalBalance, String provenance, LocalDate asOfDate,
                           LocalDate lastConfirmedDate, boolean rateNeeded,
-                          boolean partialPeriodUnsupported, List<String> warnings) {}
+                          boolean partialPeriodUnsupported, List<String> warnings, BigDecimal savingsBalance) {
+        /** What is owed once the savings, which are bound to repay it, are counted against it. */
+        public BigDecimal netDebt() {
+            return principalBalance == null || savingsBalance == null ? principalBalance
+                    : principalBalance.subtract(savingsBalance).max(ZERO);
+        }
+    }
 
+    /** The switch fields are a building savings loan's: when, and what its savings repay and leave as the building loan. */
     public record Summary(Balance balance, LocalDate nextDueDate, BigDecimal monthlyPayment,
                           BigDecimal attributedMonthlyPayment, Mortgage.RatePeriod currentRatePeriod,
                           Mortgage.RatePeriod lastRatePeriod, int remainingPaymentCount,
                           BigDecimal recordedPrincipal, BigDecimal recordedInterest, BigDecimal recordedFees,
-                          LocalDate projectedPayoffDate) {}
+                          LocalDate projectedPayoffDate, LocalDate switchDate, BigDecimal savingsAtSwitch,
+                          BigDecimal buildingLoanAtSwitch) {}
 
+    /** savings: paid into the savings account on that row (negative at the switch); null for an annuity loan. */
     public record Installment(String kind, LocalDate date, LocalDate scheduledDueDate,
                               BigDecimal principal, BigDecimal extraPrincipal, BigDecimal interest,
                               BigDecimal fees, BigDecimal total, BigDecimal balance, String provenance,
-                              BigDecimal annualNominalRatePercent, String note) {}
+                              BigDecimal annualNominalRatePercent, String note, BigDecimal savings,
+                              BigDecimal savingsBalance) {}
 
     /** `installments`: what each rate period ended up paying, by period, including a lowered one. */
     private record Replay(Balance balance, List<Installment> rows, Map<String, BigDecimal> installments) {}
@@ -117,11 +132,20 @@ public class MortgageCalculationService {
                 ? dues.stream().filter(d -> d.isAfter(asOfDate)).findFirst().orElse(null) : null;
         // A known contractual installment is still useful even when a partial cycle blocks balance estimates.
         // An extra payment that lowered it replaced the period's installment from then on.
-        BigDecimal payment = current == null ? null
-                : replayed.installments().getOrDefault(periodKey(current), current.getMonthlyPayment());
-        if (payment == null && current != null && balance.principalBalance() != null && next != null
-                && !balance.partialPeriodUnsupported()) {
-            payment = calculatedInstallment(mortgage, current, balance.principalBalance(), asOfDate);
+        LocalDate switchDate = switchDate(mortgage);
+        boolean bridging = mortgage.getBuildingSavings() != null && next != null && (switchDate == null || !next.isAfter(switchDate));
+        BigDecimal payment;
+        if (bridging) {
+            // Interest only on the bridging loan, plus the deposit into the savings account.
+            payment = current == null ? null : balance.principalBalance().multiply(current.getAnnualNominalRatePercent(), MC)
+                    .divide(TWELVE_HUNDRED, MC).add(amount(mortgage.getBuildingSavings().getMonthlyDeposit()));
+        } else {
+            payment = current == null ? null
+                    : replayed.installments().getOrDefault(periodKey(current), current.getMonthlyPayment());
+            if (payment == null && current != null && balance.principalBalance() != null && next != null
+                    && !balance.partialPeriodUnsupported()) {
+                payment = calculatedInstallment(mortgage, current, balance.principalBalance(), asOfDate);
+            }
         }
         if (payment != null) payment = money(payment, mortgage);
         BigDecimal share = mortgage.getDebtAllocationShare() == null ? ONE : mortgage.getDebtAllocationShare();
@@ -134,18 +158,23 @@ public class MortgageCalculationService {
             recordedFees = recordedFees.add(amount(p.getFeesPaid()));
         }
         LocalDate payoff = null;
+        List<Installment> ahead = List.of();
         if (balance.principalBalance() != null && balance.principalBalance().signum() == 0) {
             payoff = balance.asOfDate();
         } else if (includeProjection && !closed && mortgage.getMaturityDate() != null && !mortgage.getMaturityDate().isBefore(asOfDate)) {
-            Replay forecast = replay(mortgage, mortgage.getMaturityDate(), knownThrough, scenario);
-            payoff = forecast.rows().stream().filter(r -> r.date().isAfter(asOfDate)
+            ahead = replay(mortgage, mortgage.getMaturityDate(), knownThrough, scenario).rows();
+            payoff = ahead.stream().filter(r -> r.date().isAfter(asOfDate)
                             && r.balance() != null && r.balance().signum() == 0
-                            && ("INSTALLMENT".equals(r.kind()) || "PAYMENT".equals(r.kind())))
+                            && Set.of("INSTALLMENT", "PAYMENT", "SWITCH").contains(r.kind()))
                     .map(Installment::date).findFirst().orElse(null);
         }
+        // What the savings repay at the switch and the building loan left: replayed once it is past, projected before.
+        Installment switched = switchDate == null ? null : (switchDate.isAfter(asOfDate) ? ahead : replayed.rows()).stream()
+                .filter(r -> "SWITCH".equals(r.kind())).findFirst().orElse(null);
         return new Summary(balance, next, payment, payment == null ? null : money(payment.multiply(share, MC), mortgage),
                 current, last, closed ? 0 : remainingPaymentCount(mortgage, asOfDate),
-                money(recordedPrincipal, mortgage), money(recordedInterest, mortgage), money(recordedFees, mortgage), payoff);
+                money(recordedPrincipal, mortgage), money(recordedInterest, mortgage), money(recordedFees, mortgage), payoff,
+                switchDate, switched == null ? null : switched.extraPrincipal(), switched == null ? null : switched.balance());
     }
 
     /** Future installments are projections; confirmed records later than today never enter this view. */
@@ -178,7 +207,7 @@ public class MortgageCalculationService {
                         && !c.getAsOfDate().isAfter(knownThrough)).toList();
         if (checkpoints.isEmpty() || mortgage.getLoanStartDate() != null && horizon.isBefore(mortgage.getLoanStartDate())) {
             return new Replay(new Balance(null, "UNKNOWN", null, null, false, false,
-                    List.of("No opening bank balance is available for this date")), List.of(), Map.of());
+                    List.of("No opening bank balance is available for this date"), null), List.of(), Map.of());
         }
         Mortgage.BalanceCheckpoint first = checkpoints.getFirst();
         List<LocalDate> dues = dueDates(mortgage);
@@ -200,18 +229,40 @@ public class MortgageCalculationService {
         dues.stream().filter(d -> d.isAfter(first.getAsOfDate()) && !d.isAfter(horizon)).forEach(dates::add);
         actual.stream().map(Mortgage.Payment::getPaymentDate).forEach(dates::add);
         checkpoints.stream().map(Mortgage.BalanceCheckpoint::getAsOfDate).forEach(dates::add);
+        // A building savings loan: interest only plus a savings deposit up to its switch, where the savings repay part of it.
+        Mortgage.BuildingSavings building = mortgage.getBuildingSavings();
+        LocalDate switchDate = switchDate(mortgage);
+        List<Mortgage.SavingsCheckpoint> statements = savingsCheckpoints(mortgage).stream()
+                .filter(s -> !s.getAsOfDate().isAfter(knownThrough)).toList();
+        Map<LocalDate, List<Mortgage.SavingsCheckpoint>> statementsByDate = new HashMap<>();
+        for (var statement : statements) {
+            if (statement.getAsOfDate().isAfter(first.getAsOfDate())) {
+                statementsByDate.computeIfAbsent(statement.getAsOfDate(), ignored -> new ArrayList<>()).add(statement);
+            }
+        }
+        dates.addAll(statementsByDate.keySet());
         List<Installment> rows = new ArrayList<>();
         Set<String> warnings = new LinkedHashSet<>();
         Map<String, BigDecimal> installments = new HashMap<>();
         BigDecimal principal = money(first.getPrincipalBalance(), mortgage);
+        BigDecimal savings = null;
+        if (building != null) {
+            savings = statements.stream().filter(s -> !s.getAsOfDate().isAfter(first.getAsOfDate())).reduce((a, b) -> b)
+                    .map(s -> money(s.getBalance(), mortgage)).orElse(null);
+            if (savings == null) {
+                savings = money(ZERO, mortgage);
+                warnings.add("No building savings balance is recorded on the opening date; it is taken as zero");
+            }
+        }
         LocalDate balanceDate = first.getAsOfDate(), lastConfirmed = first.getAsOfDate();
         boolean estimated = false, blocked = false, partial = false, rateGap = false;
-        rows.add(row("OPENING", first.getAsOfDate(), null, ZERO, ZERO, ZERO, ZERO,
-                principal, "CONFIRMED", null, "Opening end-of-day principal balance", mortgage));
+        rows.add(saved(row("OPENING", first.getAsOfDate(), null, ZERO, ZERO, ZERO, ZERO,
+                principal, "CONFIRMED", null, "Opening end-of-day principal balance", mortgage), null, savings));
 
         for (LocalDate date : dates) {
             if (date.isBefore(first.getAsOfDate()) || date.isAfter(horizon)) continue;
             boolean due = dueSet.contains(date) && date.isAfter(first.getAsOfDate());
+            boolean bridging = building != null && (switchDate == null || !date.isAfter(switchDate));
             Mortgage.Payment recorded = recordedDue.get(date);
             if (due && principal.signum() > 0) {
                 LocalDate cycleStart = previousDue(date, paymentDay(mortgage));
@@ -219,6 +270,10 @@ public class MortgageCalculationService {
                 LocalDate rateFrom = rateFrom(accrualStart, first.getAsOfDate(), date);
                 Mortgage.RatePeriod period = periodForCycle(mortgage, rateFrom, date.minusDays(1));
                 boolean hasActual = recorded != null;
+                // The savings account earns its interest whether the installment was estimated or recorded.
+                if (bridging && (hasActual || date.isAfter(knownThrough) || !"STATEMENT_ONLY".equals(mortgage.getBalanceTrackingMode()))) {
+                    savings = money(savings.add(savingsInterest(savings, building)), mortgage);
+                }
                 // Two known rates inside one cycle cannot share a single rate/12 month.
                 boolean partialCycle = period == null && cycleFullyCovered(mortgage, rateFrom, date.minusDays(1));
                 if (!hasActual && (period == null || partialCycle || blocked)) {
@@ -228,20 +283,36 @@ public class MortgageCalculationService {
                             partial = partial || partialCycle;
                             warnings.add(partial ? SPLIT_RATE_WARNING
                                     : "Confirm bank terms and balance before resuming unsupported estimates");
-                            rows.add(row("UNSUPPORTED_PERIOD", date, date, null, null, null, null,
-                                    principal, "PAUSED", null, partial ? "Rate change inside the cycle: estimates paused" : "Unsupported schedule: estimates paused", mortgage));
+                            rows.add(saved(row("UNSUPPORTED_PERIOD", date, date, null, null, null, null,
+                                    principal, "PAUSED", null, partial ? "Rate change inside the cycle: estimates paused" : "Unsupported schedule: estimates paused", mortgage), null, savings));
                         } else {
                             if (period == null) rateGap = true;
                             warnings.add(period == null ? "New rate needed; scheduled principal estimates have stopped"
                                     : "A bank balance is needed to resume estimates after an unsupported period");
-                            rows.add(row("RATE_NEEDED", date, date, null, null, null, null,
-                                    principal, "PAUSED", null, "Scheduled estimate unavailable", mortgage));
+                            rows.add(saved(row("RATE_NEEDED", date, date, null, null, null, null,
+                                    principal, "PAUSED", null, "Scheduled estimate unavailable", mortgage), null, savings));
                         }
                     } else {
-                        rows.add(row("INSTALLMENT", date, date, null, null, null, null,
+                        rows.add(saved(row("INSTALLMENT", date, date, null, null, null, null,
                                 principal, "UNRECORDED", period == null ? null : period.getAnnualNominalRatePercent(),
-                                "No confirmed payment recorded; principal carried forward", mortgage));
+                                "No confirmed payment recorded; principal carried forward", mortgage), null, savings));
                     }
+                } else if (!hasActual && bridging) {
+                    // The bridging loan is never repaid by installments: its interest, and the deposit into savings.
+                    BigDecimal interest = money(prorate(principal.multiply(period.getAnnualNominalRatePercent(), MC)
+                            .divide(TWELVE_HUNDRED, MC), accrualStart, cycleStart, date), mortgage);
+                    BigDecimal deposit = money(amount(building.getMonthlyDeposit()), mortgage);
+                    boolean future = date.isAfter(knownThrough);
+                    boolean infer = future || !"STATEMENT_ONLY".equals(mortgage.getBalanceTrackingMode());
+                    if (infer) {
+                        savings = money(savings.add(deposit), mortgage);
+                        estimated = true;
+                        balanceDate = date;
+                    }
+                    rows.add(saved(row("INSTALLMENT", date, date, ZERO, ZERO, interest, ZERO,
+                            principal, future ? "PROJECTED" : infer ? "ESTIMATED" : "UNRECORDED",
+                            period.getAnnualNominalRatePercent(), infer ? "Bridging loan: interest only, plus the savings deposit"
+                                    : "Not recorded as paid; balances unchanged", mortgage), infer ? deposit : null, savings));
                 } else if (!hasActual) {
                     BigDecimal interest = money(prorate(principal.multiply(period.getAnnualNominalRatePercent(), MC)
                             .divide(TWELVE_HUNDRED, MC), accrualStart, cycleStart, date), mortgage);
@@ -255,8 +326,8 @@ public class MortgageCalculationService {
                     if (payment == null || payment.compareTo(interest) <= 0 && principal.signum() > 0) {
                         blocked = true;
                         warnings.add("The installment does not amortize principal; confirm the bank's payment or loan type");
-                        rows.add(row("UNSUPPORTED_PERIOD", date, date, null, null, interest, null,
-                                principal, "PAUSED", period.getAnnualNominalRatePercent(), "Non-amortizing installment", mortgage));
+                        rows.add(saved(row("UNSUPPORTED_PERIOD", date, date, null, null, interest, null,
+                                principal, "PAUSED", period.getAnnualNominalRatePercent(), "Non-amortizing installment", mortgage), null, savings));
                     } else {
                         BigDecimal paidPrincipal = payment.subtract(interest).min(principal).max(ZERO);
                         if (date.equals(dues.getLast())) {
@@ -272,14 +343,14 @@ public class MortgageCalculationService {
                             estimated = true;
                             balanceDate = date;
                         }
-                        rows.add(row("INSTALLMENT", date, date, paidPrincipal, ZERO, interest, ZERO,
+                        rows.add(saved(row("INSTALLMENT", date, date, paidPrincipal, ZERO, interest, ZERO,
                                 principal, future ? "PROJECTED" : infer ? "ESTIMATED" : "UNRECORDED",
-                                period.getAnnualNominalRatePercent(), infer ? null : "Not recorded as paid; balance unchanged", mortgage));
+                                period.getAnnualNominalRatePercent(), infer ? null : "Not recorded as paid; balance unchanged", mortgage), null, savings));
                     }
                 } else if (!recorded.getPaymentDate().equals(date)) {
-                    rows.add(row("INSTALLMENT", date, date, null, null, null, null, principal, "UNRECORDED",
+                    rows.add(saved(row("INSTALLMENT", date, date, null, null, null, null, principal, "UNRECORDED",
                             period == null ? null : period.getAnnualNominalRatePercent(),
-                            "Recorded installment is applied on " + recorded.getPaymentDate(), mortgage));
+                            "Recorded installment is applied on " + recorded.getPaymentDate(), mortgage), null, savings));
                 }
             }
 
@@ -287,6 +358,8 @@ public class MortgageCalculationService {
                 BigDecimal regular = amount(payment.getPrincipalPaid());
                 BigDecimal extra = amount(payment.getExtraPrincipalPaid());
                 BigDecimal paid = regular.add(extra);
+                BigDecimal intoSavings = savings == null ? null : money(amount(payment.getSavingsPaid()), mortgage);
+                if (intoSavings != null) savings = money(savings.add(intoSavings), mortgage);
                 if (paid.compareTo(principal) > 0) warnings.add("Recorded principal exceeds the tracked balance; bank reconciliation needed");
                 principal = money(principal.subtract(paid).max(ZERO), mortgage);
                 balanceDate = date;
@@ -294,7 +367,8 @@ public class MortgageCalculationService {
                 if (hypothetical) estimated = true;
                 if (!hypothetical && !estimated && !blocked) lastConfirmed = date;
                 boolean missed = payment.getScheduledDueDate() != null && paid.signum() == 0
-                        && amount(payment.getInterestPaid()).signum() == 0 && amount(payment.getFeesPaid()).signum() == 0;
+                        && amount(payment.getInterestPaid()).signum() == 0 && amount(payment.getFeesPaid()).signum() == 0
+                        && amount(payment.getSavingsPaid()).signum() == 0;
                 LocalDate paidDue = payment.getScheduledDueDate();
                 Mortgage.RatePeriod paymentRate = paidDue == null ? periodOn(mortgage, date)
                         : periodForCycle(mortgage, rateFrom(accrualStart(mortgage, previousDue(paidDue, paymentDay(mortgage))),
@@ -303,9 +377,9 @@ public class MortgageCalculationService {
                         ? lowerInstallment(mortgage, payment, date, principal, dues, first.getAsOfDate(), installments) : null;
                 String note = missed ? "Recorded missed installment" : payment.getNote();
                 if (lowered != null) note = (note == null || note.isBlank() ? "" : note + " · ") + "Installment lowered to " + lowered.toPlainString();
-                rows.add(row("PAYMENT", date, payment.getScheduledDueDate(), regular, extra,
+                rows.add(saved(row("PAYMENT", date, payment.getScheduledDueDate(), regular, extra,
                         amount(payment.getInterestPaid()), amount(payment.getFeesPaid()), principal, hypothetical ? "PROJECTED" : "CONFIRMED",
-                        paymentRate == null ? null : paymentRate.getAnnualNominalRatePercent(), note, mortgage));
+                        paymentRate == null ? null : paymentRate.getAnnualNominalRatePercent(), note, mortgage), intoSavings, savings));
             }
 
             for (Mortgage.BalanceCheckpoint checkpoint : checkpointsByDate.getOrDefault(date, List.of())) {
@@ -319,8 +393,37 @@ public class MortgageCalculationService {
                 partial = false;
                 rateGap = false;
                 warnings.clear();
-                rows.add(row("CHECKPOINT", date, null, ZERO, ZERO, ZERO, ZERO, principal,
-                        "CONFIRMED", null, "Bank balance reconciliation: " + difference.toPlainString(), mortgage));
+                rows.add(saved(row("CHECKPOINT", date, null, ZERO, ZERO, ZERO, ZERO, principal,
+                        "CONFIRMED", null, "Bank balance reconciliation: " + difference.toPlainString(), mortgage), null, savings));
+            }
+
+            for (Mortgage.SavingsCheckpoint statement : statementsByDate.getOrDefault(date, List.of())) {
+                BigDecimal difference = money(statement.getBalance().subtract(savings), mortgage);
+                savings = money(statement.getBalance(), mortgage);
+                balanceDate = date;
+                // Before the switch only the savings are ever estimated: the bridging loan's principal does not move.
+                if (bridging && !blocked) {
+                    estimated = false;
+                    lastConfirmed = date;
+                }
+                rows.add(saved(row("SAVINGS_CHECKPOINT", date, null, ZERO, ZERO, ZERO, ZERO, principal,
+                        "CONFIRMED", null, "Savings statement reconciliation: " + difference.toPlainString(), mortgage), null, savings));
+            }
+
+            if (building != null && date.equals(switchDate)) {
+                // The target amount is allocated: the savings repay the bridging loan, the rest is the building loan.
+                BigDecimal applied = savings.min(principal);
+                BigDecimal paidOut = savings.subtract(applied);
+                principal = money(principal.subtract(applied), mortgage);
+                savings = money(ZERO, mortgage);
+                estimated = true;
+                balanceDate = date;
+                String note = "Target amount allocated: the savings repay " + applied.toPlainString()
+                        + ", leaving a building loan of " + principal.toPlainString()
+                        + (paidOut.signum() > 0 ? "; " + paidOut.toPlainString() + " of savings is paid out" : "");
+                rows.add(saved(row("SWITCH", date, null, ZERO, applied, ZERO, ZERO, principal,
+                        date.isAfter(knownThrough) ? "PROJECTED" : "ESTIMATED", building.getBuildingLoanRatePercent(), note, mortgage),
+                        applied.negate(), savings));
             }
         }
         LocalDate nextDue = dues.stream().filter(d -> d.isAfter(horizon)).findFirst().orElse(null);
@@ -341,7 +444,7 @@ public class MortgageCalculationService {
         else if (balanceDate.equals(horizon)) provenance = "CONFIRMED";
         else provenance = "CARRIED";
         return new Replay(new Balance(principal, provenance, balanceDate, lastConfirmed, rateNeeded,
-                partial, List.copyOf(warnings)), List.copyOf(rows), Map.copyOf(installments));
+                partial, List.copyOf(warnings), savings), List.copyOf(rows), Map.copyOf(installments));
     }
 
     private BigDecimal calculatedInstallment(Mortgage mortgage, Mortgage.RatePeriod period,
@@ -360,7 +463,51 @@ public class MortgageCalculationService {
                 : money(principal.add(extra).add(interest).add(fees), mortgage);
         return new Installment(kind, date, scheduledDate, nullableMoney(principal, mortgage),
                 nullableMoney(extra, mortgage), nullableMoney(interest, mortgage), nullableMoney(fees, mortgage),
-                total, nullableMoney(balance, mortgage), provenance, rate, note);
+                total, nullableMoney(balance, mortgage), provenance, rate, note, null, null);
+    }
+
+    /** A building savings loan's row also shows its savings: what went in (part of the total paid) and the balance. */
+    private static Installment saved(Installment row, BigDecimal paidIn, BigDecimal savingsBalance) {
+        if (savingsBalance == null) return row;
+        BigDecimal total = row.total() == null || paidIn == null ? row.total() : row.total().add(paidIn);
+        return new Installment(row.kind(), row.date(), row.scheduledDueDate(), row.principal(), row.extraPrincipal(),
+                row.interest(), row.fees(), total, row.balance(), row.provenance(), row.annualNominalRatePercent(),
+                row.note(), paidIn, savingsBalance);
+    }
+
+    /**
+     * When a building savings loan switches to its building loan: the first installment date on or
+     * after the expected allocation, null for an annuity loan. That installment is still the bridging
+     * loan's; the savings are applied right after it.
+     */
+    public static LocalDate switchDate(Mortgage mortgage) {
+        var building = mortgage.getBuildingSavings();
+        if (building == null || building.getAllocationDate() == null || mortgage.getFirstPaymentDate() == null
+                || mortgage.getMaturityDate() == null) return null;
+        LocalDate from = building.getAllocationDate().isBefore(mortgage.getFirstPaymentDate())
+                ? mortgage.getFirstPaymentDate() : building.getAllocationDate();
+        int day = paymentDay(mortgage);
+        YearMonth month = YearMonth.from(from);
+        LocalDate due = month.atDay(Math.min(day, month.lengthOfMonth()));
+        if (due.isBefore(from)) {
+            month = month.plusMonths(1);
+            due = month.atDay(Math.min(day, month.lengthOfMonth()));
+        }
+        return due.isAfter(mortgage.getMaturityDate()) ? null : due;
+    }
+
+    /** The building loan's rate, guaranteed from the switch to the end. */
+    private static Mortgage.RatePeriod buildingLoanPeriod(Mortgage mortgage, LocalDate switchDate) {
+        var building = mortgage.getBuildingSavings();
+        BigDecimal payment = building.getBuildingLoanPayment();
+        return new Mortgage.RatePeriod(BUILDING_LOAN_PERIOD, switchDate, mortgage.getMaturityDate(),
+                building.getBuildingLoanRatePercent(), payment, payment == null ? "CALCULATED" : "BANK_AGREED",
+                switchDate, null, null, "BUILDING_SAVINGS", null);
+    }
+
+    private static BigDecimal savingsInterest(BigDecimal savings, Mortgage.BuildingSavings building) {
+        BigDecimal rate = building.getSavingsRatePercent();
+        return rate == null || savings.signum() <= 0 ? ZERO : savings.multiply(rate, MC).divide(TWELVE_HUNDRED, MC);
     }
 
     private static Mortgage.RatePeriod periodForCycle(Mortgage mortgage, LocalDate start, LocalDate end) {
@@ -423,10 +570,31 @@ public class MortgageCalculationService {
                 .divide(BigDecimal.valueOf(ChronoUnit.DAYS.between(cycleStart, due)), MC);
     }
 
+    /** A building savings loan's stored rates are the bridging loan's: they stop at the switch, where the building loan's rate starts. */
     private static List<Mortgage.RatePeriod> periods(Mortgage mortgage) {
-        return (mortgage.getRatePeriods() == null ? List.<Mortgage.RatePeriod>of() : mortgage.getRatePeriods()).stream()
+        List<Mortgage.RatePeriod> stored = (mortgage.getRatePeriods() == null ? List.<Mortgage.RatePeriod>of() : mortgage.getRatePeriods()).stream()
                 .filter(p -> p.getEffectiveFrom() != null && p.getFixedUntil() != null && p.getAnnualNominalRatePercent() != null)
                 .sorted(Comparator.comparing(Mortgage.RatePeriod::getEffectiveFrom)).toList();
+        LocalDate switchDate = switchDate(mortgage);
+        if (switchDate == null || mortgage.getBuildingSavings().getBuildingLoanRatePercent() == null) return stored;
+        List<Mortgage.RatePeriod> result = new ArrayList<>();
+        for (var period : stored) {
+            if (!period.getEffectiveFrom().isBefore(switchDate)) continue;
+            if (period.getFixedUntil().isBefore(switchDate)) { result.add(period); continue; }
+            Mortgage.RatePeriod clipped = new Mortgage.RatePeriod();
+            org.springframework.beans.BeanUtils.copyProperties(period, clipped);
+            clipped.setFixedUntil(switchDate.minusDays(1));
+            result.add(clipped);
+        }
+        result.add(buildingLoanPeriod(mortgage, switchDate));
+        return result;
+    }
+
+    private static List<Mortgage.SavingsCheckpoint> savingsCheckpoints(Mortgage mortgage) {
+        var building = mortgage.getBuildingSavings();
+        return (building == null || building.getSavingsCheckpoints() == null ? List.<Mortgage.SavingsCheckpoint>of() : building.getSavingsCheckpoints())
+                .stream().filter(c -> c.getAsOfDate() != null && c.getBalance() != null)
+                .sorted(Comparator.comparing(Mortgage.SavingsCheckpoint::getAsOfDate)).toList();
     }
 
     private static List<Mortgage.BalanceCheckpoint> checkpoints(Mortgage mortgage) {

@@ -267,6 +267,73 @@ class MortgageCalculationTests {
         amount("0", engine.summarizeScenario(m, day("2026-11-01")).recordedPrincipal());
     }
 
+    @Test
+    void buildingSavingsLoanPaysOnlyInterestUntilItsSwitchThenItsSavingsRepayPartOfIt() {
+        // Like PSS môjÚVER: 100,000 at 3.09% interest only, 468.35 a month into savings, switching on the 28th installment.
+        Mortgage m = buildingSavings(null);
+        var now = engine.balanceAt(m, day("2026-10-27"));
+        amount("100000", now.principalBalance());
+        // Feb to Oct 2026: nine deposits on top of the opening 26,908.86.
+        amount("31124.01", now.savingsBalance());
+        amount("68875.99", now.netDebt());
+        var summary = engine.summarize(m, day("2026-10-27"));
+        amount("725.85", summary.monthlyPayment()); // 257.50 interest + 468.35 into savings
+        assertEquals(day("2028-05-01"), summary.switchDate());
+        amount("40022.66", summary.savingsAtSwitch());
+        amount("59977.34", summary.buildingLoanAtSwitch());
+        var november = engine.schedule(m, day("2026-11-01"), day("2026-11-01"), day("2026-10-27")).getFirst();
+        amount("0", november.principal());
+        amount("257.50", november.interest());
+        amount("468.35", november.savings());
+        amount("725.85", november.total());
+        var switched = engine.balanceAt(m, day("2028-05-01"));
+        amount("59977.34", switched.principalBalance());
+        amount("0", switched.savingsBalance());
+        // Then the building loan's annuity over the 92 installments left, at its 2.9% to the end.
+        BigDecimal installment = engine.monthlyPayment(bd("59977.34"), bd("2.9"), 92);
+        var after = engine.summarize(m, day("2028-05-15"));
+        amount(installment.toPlainString(), after.monthlyPayment());
+        assertEquals(MortgageCalculationService.BUILDING_LOAN_PERIOD, after.currentRatePeriod().getId());
+        assertEquals(day("2036-01-01"), after.projectedPayoffDate());
+        amount("0", engine.balanceAt(m, day("2036-01-01")).principalBalance());
+    }
+
+    @Test
+    void theBanksBuildingLoanInstallmentEndsTheLoanWhenItEnds() {
+        Mortgage m = buildingSavings("800");
+        var after = engine.summarize(m, day("2028-05-15"));
+        amount("800", after.monthlyPayment());
+        assertTrue(after.projectedPayoffDate().isBefore(day("2036-01-01")), "800 a month repays 59,977.34 early");
+        // 1 Jun 2028: 144.95 interest on the building loan, 655.05 repaid.
+        amount("59322.29", engine.balanceAt(m, day("2028-06-01")).principalBalance());
+    }
+
+    @Test
+    void savingsStatementsDepositsAndInterestMoveTheSavingsNotTheBridgingLoan() {
+        Mortgage m = buildingSavings(null);
+        m.getBuildingSavings().getSavingsCheckpoints().add(new Mortgage.SavingsCheckpoint("s1", day("2026-06-15"), bd("30000"), "BANK_STATEMENT", null, null));
+        Mortgage.Payment extra = payment("2026-07-10", null, "0", "0", "0", "0");
+        extra.setSavingsPaid(bd("1000"));
+        m.getPayments().add(extra);
+        var balance = engine.balanceAt(m, day("2026-10-27"));
+        amount("100000", balance.principalBalance());
+        // 30,000 on 15 Jun, the Jul–Oct deposits and the 1,000 top-up.
+        amount("32873.40", balance.savingsBalance());
+        Mortgage earning = buildingSavings(null);
+        earning.getBuildingSavings().setSavingsRatePercent(bd("1.2"));
+        // 0.1% a month: 26.91 on 26,908.86, then the deposit.
+        amount("27404.12", engine.balanceAt(earning, day("2026-02-01")).savingsBalance());
+    }
+
+    private Mortgage buildingSavings(String buildingLoanPayment) {
+        Mortgage m = mortgage("2026-01-01", "100000", "2026-02-01", "2036-01-01", 1, "3.09", "1");
+        m.getRatePeriods().getFirst().setMonthlyPayment(null); // a bridging rate has no installment of its own
+        m.setBuildingSavings(new Mortgage.BuildingSavings(bd("468.35"), null, day("2028-05-01"), bd("2.9"),
+                buildingLoanPayment == null ? null : bd(buildingLoanPayment),
+                new ArrayList<>(List.of(new Mortgage.SavingsCheckpoint("s0", day("2026-01-01"), bd("26908.86"), "BANK_STATEMENT", null, null)))));
+        return m;
+    }
+
     private Mortgage mortgage(String anchor, String principal, String firstDue, String maturity, int day, String pct, String payment) {
         Mortgage m = new Mortgage();
         m.setId("synthetic-loan"); m.setCurrency("EUR"); m.setLoanStartDate(day(anchor));

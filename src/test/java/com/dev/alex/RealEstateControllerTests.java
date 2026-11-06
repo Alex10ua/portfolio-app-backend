@@ -103,6 +103,17 @@ class RealEstateControllerTests {
     }
 
     @Test
+    void savingsStatementChecksOwnershipFirst() throws Exception {
+        mvc.perform(post("/api/v1/portfolio-a/properties/property-a/mortgages/loan-a/savings-checkpoints").principal(authentication)
+                        .header("Idempotency-Key", "statement").contentType("application/json")
+                        .content("{\"version\":1,\"asOfDate\":\"2026-10-27\",\"balance\":\"31000\"}"))
+                .andExpect(status().isOk());
+        var order = inOrder(access, realEstate);
+        order.verify(access).assertOwnership("portfolio-a", "synthetic-user");
+        order.verify(realEstate).savingsCheckpoint(eq("portfolio-a"), eq("property-a"), eq("loan-a"), isNull(), any(), eq("statement"));
+    }
+
+    @Test
     void anotherUsersPortfolioNeverReachesDelete() throws Exception {
         doThrow(new AccessDeniedException("no")).when(access).assertOwnership("portfolio-b", "synthetic-user");
         mvc.perform(delete("/api/v1/portfolio-b/properties/property-a").param("version", "0").principal(authentication))

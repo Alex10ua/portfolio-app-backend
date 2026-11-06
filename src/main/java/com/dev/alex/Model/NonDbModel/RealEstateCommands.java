@@ -19,11 +19,22 @@ public final class RealEstateCommands {
     public record MortgageCommand(Long version, Long propertyVersion, String name, String lender, String currency,
             BigDecimal originalPrincipal, LocalDate loanStartDate, LocalDate firstPaymentDate, LocalDate maturityDate,
             Integer paymentDay, BigDecimal debtAllocationShare, String balanceTrackingMode,
-            BalanceCommand openingBalance, RateCommand ratePeriod) {}
+            BalanceCommand openingBalance, RateCommand ratePeriod, BuildingSavingsCommand buildingSavings) {}
+
+    /**
+     * Null on a MortgageCommand = an annuity loan (on an update: unchanged). savingsBalance is the
+     * savings account on the opening balance date, read on setup only.
+     */
+    public record BuildingSavingsCommand(BigDecimal monthlyDeposit, BigDecimal savingsBalance,
+            BigDecimal savingsRatePercent, LocalDate allocationDate, BigDecimal buildingLoanRatePercent,
+            BigDecimal buildingLoanPayment) {}
 
     public record PaymentCommand(Long version, LocalDate paymentDate, LocalDate scheduledDueDate,
             BigDecimal principalPaid, BigDecimal extraPrincipalPaid, BigDecimal interestPaid,
-            BigDecimal feesPaid, String note, Boolean lowerInstallment, BigDecimal newInstallment) {}
+            BigDecimal feesPaid, String note, Boolean lowerInstallment, BigDecimal newInstallment,
+            BigDecimal savingsPaid) {}
+
+    public record SavingsCommand(Long version, LocalDate asOfDate, BigDecimal balance, String source, String note) {}
 
     /** An unsaved "what if I pay this much extra on this day". */
     public record ExtraPaymentCommand(LocalDate date, BigDecimal amount) {}

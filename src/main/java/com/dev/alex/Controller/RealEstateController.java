@@ -145,6 +145,22 @@ public class RealEstateController {
         return realEstateService.checkpoint(portfolioId, propertyId, mortgageId, checkpointId, command, key);
     }
 
+    @PostMapping("/{propertyId}/mortgages/{mortgageId}/savings-checkpoints")
+    public PropertyView savingsCheckpoint(@PathVariable String portfolioId, @PathVariable String propertyId,
+            @PathVariable String mortgageId, @RequestBody SavingsCommand command,
+            @RequestHeader("Idempotency-Key") String key, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        return realEstateService.savingsCheckpoint(portfolioId, propertyId, mortgageId, null, command, key);
+    }
+
+    @PatchMapping("/{propertyId}/mortgages/{mortgageId}/savings-checkpoints/{checkpointId}")
+    public PropertyView correctSavingsCheckpoint(@PathVariable String portfolioId, @PathVariable String propertyId,
+            @PathVariable String mortgageId, @PathVariable String checkpointId, @RequestBody SavingsCommand command,
+            @RequestHeader("Idempotency-Key") String key, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        return realEstateService.savingsCheckpoint(portfolioId, propertyId, mortgageId, checkpointId, command, key);
+    }
+
     @PostMapping("/{propertyId}/mortgages/{mortgageId}/rate-periods")
     public PropertyView rate(@PathVariable String portfolioId, @PathVariable String propertyId,
             @PathVariable String mortgageId, @RequestBody RateCommand command,

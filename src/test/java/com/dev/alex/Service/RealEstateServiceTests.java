@@ -197,7 +197,7 @@ class RealEstateServiceTests {
         var midMonth = new MortgageCommand(null, property.getVersion(), valid.name(), valid.lender(), valid.currency(), valid.originalPrincipal(),
                 valid.loanStartDate(), valid.firstPaymentDate(), valid.maturityDate(), valid.paymentDay(), valid.debtAllocationShare(),
                 valid.balanceTrackingMode(), new BalanceCommand(null, LocalDate.of(2026, 10, 20), new BigDecimal("180000"), "BANK_STATEMENT", null),
-                new RateCommand(null, LocalDate.of(2026, 10, 20), LocalDate.of(2029, 9, 30), new BigDecimal("4"), null, null));
+                new RateCommand(null, LocalDate.of(2026, 10, 20), LocalDate.of(2029, 9, 30), new BigDecimal("4"), null, null), null);
         var result = service.createMortgage(PID, property.getId(), midMonth, "loan");
         assertEquals(new BigDecimal("891.38"), result.mortgages().getFirst().getRatePeriods().getFirst().getMonthlyPayment());
         assertFalse(onlySummary(result).balance().partialPeriodUnsupported());
@@ -251,7 +251,7 @@ class RealEstateServiceTests {
         var valid = mortgageCommand(p, "1");
         var missing = new MortgageCommand(null, p.getVersion(), valid.name(), valid.lender(), valid.currency(), valid.originalPrincipal(),
                 valid.loanStartDate(), valid.firstPaymentDate(), valid.maturityDate(), valid.paymentDay(), valid.debtAllocationShare(),
-                valid.balanceTrackingMode(), null, valid.ratePeriod());
+                valid.balanceTrackingMode(), null, valid.ratePeriod(), null);
         assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.createMortgage(PID, p.getId(), missing, "loan"));
         assertEquals("MORTGAGE_SETUP_PENDING", p.getFinancingStatus());
         verify(mortgages, never()).insert(any(Mortgage.class));
@@ -261,7 +261,7 @@ class RealEstateServiceTests {
     void actualPaymentReducesOnlyPrincipalAndReplayIsSafe() {
         Mortgage loan = createLoan();
         PaymentCommand command = new PaymentCommand(loan.getVersion(), TODAY, null,
-                new BigDecimal("300"), new BigDecimal("100"), new BigDecimal("600"), new BigDecimal("10"), "Recorded externally", null, null);
+                new BigDecimal("300"), new BigDecimal("100"), new BigDecimal("600"), new BigDecimal("10"), "Recorded externally", null, null, null);
         var first = service.payment(PID, loan.getPropertyId(), loan.getId(), null, command, "payment");
         service.payment(PID, loan.getPropertyId(), loan.getId(), null, command, "payment");
         assertEquals(0, new BigDecimal("179600").compareTo(first.attributedMortgagePrincipal()));
@@ -274,9 +274,9 @@ class RealEstateServiceTests {
         Mortgage loan = createLoan();
         Long originalVersion = loan.getVersion();
         service.payment(PID, loan.getPropertyId(), loan.getId(), null, new PaymentCommand(originalVersion,
-                TODAY, null, new BigDecimal("300"), BigDecimal.ZERO, new BigDecimal("600"), BigDecimal.ZERO, null, null, null), "payment-decimals");
+                TODAY, null, new BigDecimal("300"), BigDecimal.ZERO, new BigDecimal("600"), BigDecimal.ZERO, null, null, null, null), "payment-decimals");
         service.payment(PID, loan.getPropertyId(), loan.getId(), null, new PaymentCommand(originalVersion,
-                TODAY, null, new BigDecimal("300.00"), new BigDecimal("0.00"), new BigDecimal("600.000"), new BigDecimal("0.0"), null, null, null), "payment-decimals");
+                TODAY, null, new BigDecimal("300.00"), new BigDecimal("0.00"), new BigDecimal("600.000"), new BigDecimal("0.0"), null, null, null, null), "payment-decimals");
         assertEquals(1, loan.getPayments().size());
         verify(mortgages, times(1)).save(any(Mortgage.class));
     }
@@ -288,12 +288,12 @@ class RealEstateServiceTests {
                 new BalanceCommand(loan.getVersion(), TODAY, BigDecimal.ZERO, "BANK_STATEMENT", "Paid off"), "zero-checkpoint");
         var result = service.payment(PID, loan.getPropertyId(), loan.getId(), null,
                 new PaymentCommand(loan.getVersion(), TODAY, null, new BigDecimal("180000"), BigDecimal.ZERO,
-                        new BigDecimal("600"), BigDecimal.ZERO, "Payoff already included in bank balance", null, null), "payoff-payment");
+                        new BigDecimal("600"), BigDecimal.ZERO, "Payoff already included in bank balance", null, null, null), "payoff-payment");
         assertEquals(0, result.attributedMortgagePrincipal().signum());
         assertEquals(0, new BigDecimal("180000").compareTo(onlySummary(result).recordedPrincipal()));
         var excessive = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.payment(PID,
                 loan.getPropertyId(), loan.getId(), null, new PaymentCommand(loan.getVersion(), TODAY, null,
-                        BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null), "another-payment"));
+                        BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, null), "another-payment"));
         assertEquals(400, excessive.getStatus());
     }
 
@@ -303,7 +303,7 @@ class RealEstateServiceTests {
         var openingDate = loan.getBalanceCheckpoints().getFirst().getAsOfDate();
         var result = service.payment(PID, loan.getPropertyId(), loan.getId(), null,
                 new PaymentCommand(loan.getVersion(), openingDate, null, new BigDecimal("300"), BigDecimal.ZERO,
-                        new BigDecimal("600"), BigDecimal.ZERO, "Already included in opening end-of-day balance", null, null), "opening-day-payment");
+                        new BigDecimal("600"), BigDecimal.ZERO, "Already included in opening end-of-day balance", null, null, null), "opening-day-payment");
         assertEquals(0, new BigDecimal("180000").compareTo(result.attributedMortgagePrincipal()));
         assertEquals(0, new BigDecimal("300").compareTo(onlySummary(result).recordedPrincipal()));
     }
@@ -315,7 +315,7 @@ class RealEstateServiceTests {
         loan.getRatePeriods().getFirst().setEffectiveFrom(LocalDate.of(2026, 9, 1));
         var result = service.payment(PID, loan.getPropertyId(), loan.getId(), null,
                 new PaymentCommand(loan.getVersion(), LocalDate.of(2026, 10, 1), null,
-                        new BigDecimal("300"), BigDecimal.ZERO, new BigDecimal("600"), BigDecimal.ZERO, null, null, null), "due-date-payment");
+                        new BigDecimal("300"), BigDecimal.ZERO, new BigDecimal("600"), BigDecimal.ZERO, null, null, null, null), "due-date-payment");
         assertEquals(LocalDate.of(2026, 10, 1), loan.getPayments().getFirst().getScheduledDueDate());
         assertEquals(0, new BigDecimal("179700").compareTo(result.attributedMortgagePrincipal()));
     }
@@ -390,7 +390,7 @@ class RealEstateServiceTests {
                 new BigDecimal("600"), "BANK_AGREED");
         var bad = new MortgageCommand(null, p.getVersion(), valid.name(), valid.lender(), valid.currency(), valid.originalPrincipal(),
                 valid.loanStartDate(), valid.firstPaymentDate(), valid.maturityDate(), valid.paymentDay(), valid.debtAllocationShare(),
-                valid.balanceTrackingMode(), valid.openingBalance(), badRate);
+                valid.balanceTrackingMode(), valid.openingBalance(), badRate, null);
         assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.createMortgage(PID, p.getId(), bad, "loan"));
         verify(mortgages, never()).insert(any(Mortgage.class));
     }
@@ -490,14 +490,14 @@ class RealEstateServiceTests {
     void loweringTheInstallmentNeedsExtraPrincipalAndAnAmortizingAmount() {
         Mortgage loan = createLoan();
         var noExtra = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.payment(PID, loan.getPropertyId(), loan.getId(), null,
-                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, true, null), "no-extra"));
+                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, true, null, null), "no-extra"));
         assertEquals(400, noExtra.getStatus());
         // 170,000 left at 4% carries 566.67 interest a month: 100 cannot repay it.
         var tooLow = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.payment(PID, loan.getPropertyId(), loan.getId(), null,
-                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO, null, true, new BigDecimal("100")), "too-low"));
+                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO, null, true, new BigDecimal("100"), null), "too-low"));
         assertEquals(400, tooLow.getStatus());
         var view = service.payment(PID, loan.getPropertyId(), loan.getId(), null,
-                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO, null, true, null), "lower");
+                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO, null, true, null, null), "lower");
         assertTrue(loan.getPayments().getFirst().getLowerInstallment());
         assertNull(loan.getPayments().getFirst().getNewInstallment());
         // 170,000 over the 336 installments still due (Nov 2026 to Oct 2054), down from 891.38 on 180,000.
@@ -514,7 +514,7 @@ class RealEstateServiceTests {
                 new RateCommand(loan.getVersion(), refix, LocalDate.of(2034, 9, 30), new BigDecimal("5"), null, null), "next-rate");
         Mortgage.RatePeriod next = loan.getRatePeriods().stream().filter(p -> refix.equals(p.getEffectiveFrom())).findFirst().orElseThrow();
         service.payment(PID, loan.getPropertyId(), loan.getId(), null,
-                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("20000"), BigDecimal.ZERO, BigDecimal.ZERO, null, true, null), "lower");
+                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("20000"), BigDecimal.ZERO, BigDecimal.ZERO, null, true, null, null), "lower");
         Mortgage.RatePeriod reworked = loan.getRatePeriods().stream().filter(p -> refix.equals(p.getEffectiveFrom())).findFirst().orElseThrow();
         // Worked out on the balance the extra payment left, as saving that rate now would.
         var calc = new MortgageCalculationService(service.clock);
@@ -534,7 +534,7 @@ class RealEstateServiceTests {
                 new RateCommand(other.getVersion(), refix, LocalDate.of(2034, 9, 30), new BigDecimal("5"), null, null), "next-rate");
         BigDecimal kept = other.getRatePeriods().stream().filter(p -> refix.equals(p.getEffectiveFrom())).findFirst().orElseThrow().getMonthlyPayment();
         service.payment(PID, other.getPropertyId(), other.getId(), null,
-                new PaymentCommand(other.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("20000"), BigDecimal.ZERO, BigDecimal.ZERO, null, null, null), "keep");
+                new PaymentCommand(other.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("20000"), BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, null), "keep");
         assertEquals(kept, other.getRatePeriods().stream().filter(p -> refix.equals(p.getEffectiveFrom())).findFirst().orElseThrow().getMonthlyPayment());
     }
 
@@ -598,6 +598,69 @@ class RealEstateServiceTests {
         assertTrue(debt.warnings().stream().anyMatch(w -> w.startsWith("Down-payment loan: ")));
     }
 
+    @Test
+    void buildingSavingsLoanCountsItsSavingsAgainstTheDebt() {
+        var p = service.createProperty(PID, propertyCommand("MORTGAGE_SETUP_PENDING", "300000", "1"), "bs-property").property();
+        var view = service.createMortgage(PID, p.getId(), buildingSavingsCommand(p, LocalDate.of(2028, 5, 1)), "bs-loan");
+        Mortgage loan = view.mortgages().getFirst();
+        // A 100,000 bridging loan with 30,000 saved towards it: 70,000 owed.
+        assertEquals(0, new BigDecimal("70000").compareTo(view.attributedMortgagePrincipal()));
+        assertEquals(0, new BigDecimal("30000").compareTo(view.attributedBuildingSavings()));
+        assertEquals(0, new BigDecimal("230000").compareTo(view.equity()));
+        assertNull(loan.getRatePeriods().getFirst().getMonthlyPayment(), "A bridging rate repays nothing, so it has no annuity");
+        assertEquals(LocalDate.of(2028, 5, 1), onlySummary(view).switchDate());
+        assertEquals(0, new BigDecimal("725.85").compareTo(onlySummary(view).monthlyPayment()), "257.50 interest + 468.35 savings");
+        // A statement replaces the estimated savings.
+        view = service.savingsCheckpoint(PID, p.getId(), loan.getId(), null,
+                new SavingsCommand(loan.getVersion(), TODAY, new BigDecimal("31000"), "BANK_STATEMENT", null), "statement");
+        assertEquals(0, new BigDecimal("31000").compareTo(view.attributedBuildingSavings()));
+        // The bank confirms the allocation date only later: it stays editable.
+        view = service.updateMortgage(PID, p.getId(), loan.getId(), new MortgageCommand(loan.getVersion(), null, null, null, null, null,
+                null, null, null, null, null, null, null, null,
+                new BuildingSavingsCommand(new BigDecimal("468.35"), null, null, LocalDate.of(2029, 1, 15), new BigDecimal("2.9"), null)), "move");
+        assertEquals(LocalDate.of(2029, 2, 1), onlySummary(view).switchDate(), "The switch falls on the next installment date");
+    }
+
+    @Test
+    void buildingSavingsLoanRulesFollowItsTwoPhases() {
+        var p = service.createProperty(PID, propertyCommand("MORTGAGE_SETUP_PENDING", "300000", "1"), "bs-property").property();
+        var switched = assertThrows(RealEstateServiceImpl.RealEstateException.class, () ->
+                service.createMortgage(PID, p.getId(), buildingSavingsCommand(p, LocalDate.of(2026, 9, 1)), "bs-early"));
+        assertEquals(400, switched.getStatus(), "A loan past its switch is set up as an annuity loan");
+        var never = assertThrows(RealEstateServiceImpl.RealEstateException.class, () ->
+                service.createMortgage(PID, p.getId(), buildingSavingsCommand(p, LocalDate.of(2036, 10, 1)), "bs-late"));
+        assertEquals(400, never.getStatus(), "The switch must leave installments for the building loan");
+        Mortgage loan = service.createMortgage(PID, p.getId(), buildingSavingsCommand(p, LocalDate.of(2028, 5, 1)), "bs-loan").mortgages().getFirst();
+        var lowered = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.payment(PID, p.getId(), loan.getId(), null,
+                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, new BigDecimal("1000"), BigDecimal.ZERO, BigDecimal.ZERO, null, true, null, null), "lower"));
+        assertEquals(400, lowered.getStatus(), "The bridging installment is interest only");
+        var preview = assertThrows(RealEstateServiceImpl.RealEstateException.class, () ->
+                service.extraPaymentPreview(PID, p.getId(), loan.getId(), new ExtraPaymentCommand(TODAY, new BigDecimal("1000"))));
+        assertEquals(409, preview.getStatus());
+        // An extra deposit into savings is a payment of its own.
+        var view = service.payment(PID, p.getId(), loan.getId(), null,
+                new PaymentCommand(loan.getVersion(), TODAY, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, new BigDecimal("2000")), "top-up");
+        assertEquals(0, new BigDecimal("32000").compareTo(view.attributedBuildingSavings()));
+        assertEquals(0, new BigDecimal("68000").compareTo(view.attributedMortgagePrincipal()));
+        // An annuity loan neither has savings nor becomes a building savings loan.
+        Mortgage annuity = createLoan();
+        var noAccount = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.payment(PID, annuity.getPropertyId(), annuity.getId(), null,
+                new PaymentCommand(annuity.getVersion(), TODAY, null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, new BigDecimal("100")), "deposit"));
+        assertEquals(400, noAccount.getStatus());
+        var retype = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.updateMortgage(PID, annuity.getPropertyId(), annuity.getId(),
+                new MortgageCommand(annuity.getVersion(), null, null, null, null, null, null, null, null, null, null, null, null, null,
+                        new BuildingSavingsCommand(BigDecimal.TEN, null, null, LocalDate.of(2028, 5, 1), BigDecimal.ONE, null)), "retype"));
+        assertEquals(409, retype.getStatus());
+    }
+
+    private MortgageCommand buildingSavingsCommand(RealEstateProperty property, LocalDate allocation) {
+        return new MortgageCommand(null, property.getVersion(), "môjÚVER", "Fictional building society", "EUR", new BigDecimal("100000"),
+                LocalDate.of(2026, 10, 1), LocalDate.of(2026, 11, 1), LocalDate.of(2036, 10, 1), 1, BigDecimal.ONE, "SCHEDULE_ESTIMATE",
+                new BalanceCommand(null, LocalDate.of(2026, 10, 1), new BigDecimal("100000"), "BANK_STATEMENT", null),
+                new RateCommand(null, LocalDate.of(2026, 10, 1), LocalDate.of(2031, 9, 30), new BigDecimal("3.09"), null, null),
+                new BuildingSavingsCommand(new BigDecimal("468.35"), new BigDecimal("30000"), null, allocation, new BigDecimal("2.9"), null));
+    }
+
     private Mortgage createLoan() {
         var p = service.createProperty(PID, propertyCommand("MORTGAGE_SETUP_PENDING", "300000", "1"), "property").property();
         return service.createMortgage(PID, p.getId(), mortgageCommand(p, "1"), "loan").mortgages().getFirst();
@@ -618,7 +681,7 @@ class RealEstateServiceTests {
         return new MortgageCommand(null, property.getVersion(), "Down-payment loan", "Fictional bank", "EUR", new BigDecimal("20000"),
                 LocalDate.of(2026, 10, 1), LocalDate.of(2026, 11, 1), LocalDate.of(2036, 10, 1), 1, BigDecimal.ONE, "SCHEDULE_ESTIMATE",
                 new BalanceCommand(null, LocalDate.of(2026, 10, 1), new BigDecimal("20000"), "BANK_STATEMENT", null),
-                new RateCommand(null, LocalDate.of(2026, 10, 1), fixedUntil, new BigDecimal("7"), null, null));
+                new RateCommand(null, LocalDate.of(2026, 10, 1), fixedUntil, new BigDecimal("7"), null, null), null);
     }
 
     /** The one loan of a single-loan property. */
@@ -638,6 +701,6 @@ class RealEstateServiceTests {
                 LocalDate.of(2024, 10, 1), LocalDate.of(2024, 11, 1), LocalDate.of(2054, 10, 1), 1,
                 new BigDecimal(allocation), "SCHEDULE_ESTIMATE",
                 new BalanceCommand(null, LocalDate.of(2026, 10, 1), new BigDecimal("180000"), "BANK_STATEMENT", null),
-                new RateCommand(null, LocalDate.of(2026, 10, 1), LocalDate.of(2029, 9, 30), new BigDecimal("4"), null, null));
+                new RateCommand(null, LocalDate.of(2026, 10, 1), LocalDate.of(2029, 9, 30), new BigDecimal("4"), null, null), null);
     }
 }
