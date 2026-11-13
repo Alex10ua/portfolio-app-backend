@@ -45,6 +45,10 @@ public final class RealEstateCommands {
     public record RateCommand(Long version, LocalDate effectiveFrom, LocalDate fixedUntil,
             BigDecimal annualNominalRatePercent, BigDecimal monthlyPayment, String paymentSource) {}
 
+    /** A promotion off the agreed rate. remove = true (with its id) deletes it. */
+    public record DiscountCommand(Long version, LocalDate firstDueDate, Integer installmentCount,
+            BigDecimal discountPercent, BigDecimal monthlyPayment, String note, Boolean remove) {}
+
     public record DateCommand(Long version, LocalDate date) {}
 
     public record PreviewCommand(LocalDate effectiveFrom, LocalDate fixedUntil, BigDecimal annualNominalRatePercent,

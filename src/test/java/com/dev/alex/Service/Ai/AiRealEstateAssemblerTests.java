@@ -252,7 +252,7 @@ class AiRealEstateAssemblerTests {
         return new MortgageCalculationService.Summary(new MortgageCalculationService.Balance(
                 principal == null ? null : bd(principal), provenance, TODAY, TODAY, false, false, List.of(),
                 savings == null ? null : bd(savings)), null, null, null, null, null, 0,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null);
     }
 
     private static MortgageCalculationService.Installment installment(LocalDate date) {

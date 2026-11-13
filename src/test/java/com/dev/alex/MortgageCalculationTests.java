@@ -28,6 +28,48 @@ class MortgageCalculationTests {
     }
 
     @Test
+    void promotionLowersTheRateForItsInstallmentsThenTheFullRateIsWorkedOutAgain() {
+        Mortgage m = mortgage("2026-01-01", "12000", "2026-02-01", "2028-01-01", 1, "6", "0");
+        m.getRatePeriods().getFirst().setMonthlyPayment(null);
+        m.getRatePeriods().getFirst().setPaymentSource("CALCULATED");
+        m.getRateDiscounts().add(new Mortgage.RateDiscount("promo", day("2026-02-01"), 12, bd("1"), null, null, null));
+        var all = engine.schedule(m, day("2026-01-01"), day("2028-01-01"), day("2026-01-01"));
+        var rows = all.stream().filter(r -> "INSTALLMENT".equals(r.kind())).toList();
+        assertEquals(24, rows.size(), "whole cycles: no installment pauses at either end of the promotion");
+        amount("50.00", rows.getFirst().interest());
+        amount(engine.monthlyPayment(bd("12000"), bd("5"), 24).toPlainString(), rows.getFirst().total());
+        amount("5", rows.get(11).annualNominalRatePercent());
+        amount("6", rows.get(12).annualNominalRatePercent());
+        amount(engine.monthlyPayment(rows.get(11).balance(), bd("6"), 12).toPlainString(), rows.get(12).total());
+        amount("0", rows.getLast().balance());
+        assertTrue(engine.balanceAt(m, day("2026-06-15")).warnings().isEmpty());
+    }
+
+    @Test
+    void bankPromotionalInstallmentAppliesMeanwhileAndTheAgreedOneAfter() {
+        Mortgage m = mortgage("2026-01-01", "12000", "2026-02-01", "2028-01-01", 1, "6", "531.85");
+        m.getRateDiscounts().add(new Mortgage.RateDiscount("promo", day("2026-04-01"), 3, bd("0.5"), bd("520"), null, null));
+        var rows = engine.schedule(m, day("2026-01-01"), day("2028-01-01"), day("2026-01-01")).stream()
+                .filter(r -> "INSTALLMENT".equals(r.kind())).toList();
+        amount("6", rows.get(1).annualNominalRatePercent());
+        amount("531.85", rows.get(1).total());
+        amount("5.5", rows.get(2).annualNominalRatePercent());
+        amount("520", rows.get(2).total());
+        amount("520", rows.get(4).total());
+        amount("6", rows.get(5).annualNominalRatePercent());
+        amount("531.85", rows.get(5).total());
+        var summary = engine.summarize(m, day("2026-04-15"));
+        assertEquals("2026-01-01", summary.currentRatePeriod().getId(), "shown as the agreed period");
+        assertEquals(day("2055-12-31"), summary.currentRatePeriod().getFixedUntil(), "the fixation does not end with the promotion");
+        amount("5.5", summary.currentRatePeriod().getAnnualNominalRatePercent());
+        assertEquals("promo", summary.ratePromotion().getId());
+        assertEquals(day("2026-06-01"), summary.promotionLastDue());
+        amount("6", summary.agreedRatePercent());
+        amount("520", summary.monthlyPayment());
+        assertEquals(1, m.getRatePeriods().size(), "the agreed rate is never rewritten");
+    }
+
+    @Test
     void scheduledPrincipalAndInterestStaySeparateAndFutureIsProjected() {
         Mortgage m = mortgage("2026-10-01", "180000", "2026-11-01", "2054-10-01", 1, "4", "891.38");
         List<MortgageCalculationService.Installment> rows = engine.schedule(m, day("2026-10-01"), day("2026-11-01"), day("2026-10-27"));

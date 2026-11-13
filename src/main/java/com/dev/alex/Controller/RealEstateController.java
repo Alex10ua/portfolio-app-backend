@@ -177,6 +177,23 @@ public class RealEstateController {
         return realEstateService.rate(portfolioId, propertyId, mortgageId, rateId, command, key);
     }
 
+    @PostMapping("/{propertyId}/mortgages/{mortgageId}/rate-discounts")
+    public PropertyView discount(@PathVariable String portfolioId, @PathVariable String propertyId,
+            @PathVariable String mortgageId, @RequestBody DiscountCommand command,
+            @RequestHeader("Idempotency-Key") String key, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        return realEstateService.discount(portfolioId, propertyId, mortgageId, null, command, key);
+    }
+
+    /** Corrects a promotion, or removes it with remove = true. */
+    @PatchMapping("/{propertyId}/mortgages/{mortgageId}/rate-discounts/{discountId}")
+    public PropertyView correctDiscount(@PathVariable String portfolioId, @PathVariable String propertyId,
+            @PathVariable String mortgageId, @PathVariable String discountId, @RequestBody DiscountCommand command,
+            @RequestHeader("Idempotency-Key") String key, Authentication authentication) {
+        portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
+        return realEstateService.discount(portfolioId, propertyId, mortgageId, discountId, command, key);
+    }
+
     @GetMapping("/{propertyId}/mortgages/{mortgageId}/schedule")
     public List<MortgageCalculationService.Installment> schedule(@PathVariable String portfolioId, @PathVariable String propertyId,
             @PathVariable String mortgageId, @RequestParam(required = false) LocalDate from,

@@ -62,13 +62,18 @@ public class MortgageCalculationService {
         }
     }
 
-    /** The switch fields are a building savings loan's: when, and what its savings repay and leave as the building loan. */
+    /**
+     * The switch fields are a building savings loan's: when, and what its savings repay and leave as the building loan.
+     * The rate periods are shown as agreed (that id and fixation) at the rate in force, which a promotion lowers;
+     * ratePromotion is the promotion in force, with its last lowered installment and the agreed rate it lowers.
+     */
     public record Summary(Balance balance, LocalDate nextDueDate, BigDecimal monthlyPayment,
                           BigDecimal attributedMonthlyPayment, Mortgage.RatePeriod currentRatePeriod,
                           Mortgage.RatePeriod lastRatePeriod, int remainingPaymentCount,
                           BigDecimal recordedPrincipal, BigDecimal recordedInterest, BigDecimal recordedFees,
                           LocalDate projectedPayoffDate, LocalDate switchDate, BigDecimal savingsAtSwitch,
-                          BigDecimal buildingLoanAtSwitch) {}
+                          BigDecimal buildingLoanAtSwitch, Mortgage.RateDiscount ratePromotion,
+                          LocalDate promotionLastDue, BigDecimal agreedRatePercent) {}
 
     /** savings: paid into the savings account on that row (negative at the switch); null for an annuity loan. */
     public record Installment(String kind, LocalDate date, LocalDate scheduledDueDate,
@@ -171,10 +176,13 @@ public class MortgageCalculationService {
         // What the savings repay at the switch and the building loan left: replayed once it is past, projected before.
         Installment switched = switchDate == null ? null : (switchDate.isAfter(asOfDate) ? ahead : replayed.rows()).stream()
                 .filter(r -> "SWITCH".equals(r.kind())).findFirst().orElse(null);
+        Mortgage.RateDiscount promotion = promotionOf(mortgage, current);
         return new Summary(balance, next, payment, payment == null ? null : money(payment.multiply(share, MC), mortgage),
-                current, last, closed ? 0 : remainingPaymentCount(mortgage, asOfDate),
+                shown(mortgage, current), shown(mortgage, last), closed ? 0 : remainingPaymentCount(mortgage, asOfDate),
                 money(recordedPrincipal, mortgage), money(recordedInterest, mortgage), money(recordedFees, mortgage), payoff,
-                switchDate, switched == null ? null : switched.extraPrincipal(), switched == null ? null : switched.balance());
+                switchDate, switched == null ? null : switched.extraPrincipal(), switched == null ? null : switched.balance(),
+                promotion, promotion == null ? null : promotionLastDue(mortgage, promotion),
+                promotion == null ? null : agreedOf(mortgage, current).getAnnualNominalRatePercent());
     }
 
     /** Future installments are projections; confirmed records later than today never enter this view. */
@@ -570,8 +578,135 @@ public class MortgageCalculationService {
                 .divide(BigDecimal.valueOf(ChronoUnit.DAYS.between(cycleStart, due)), MC);
     }
 
-    /** A building savings loan's stored rates are the bridging loan's: they stop at the switch, where the building loan's rate starts. */
+    /** The rate in force through the loan: the agreed periods, lowered where a promotion applies. */
     private static List<Mortgage.RatePeriod> periods(Mortgage mortgage) {
+        return discounted(mortgage, agreedPeriods(mortgage));
+    }
+
+    /**
+     * A promotion lowers the agreed rate over its installments' whole cycles, from the day after the
+     * installment before its first one through the day before its last one. Each agreed period is cut
+     * into derived pieces with their own ids (so each works out its own installment): before the
+     * promotion it stays as agreed, inside it `{id}~{promotion}` carries the lower rate and the bank's
+     * promotional installment or none (calculated), after it `{id}@{start}` carries the agreed rate
+     * again, with a calculated installment worked out afresh on the balance then. A bank-agreed
+     * installment of the agreed period applies again as it is.
+     */
+    private static List<Mortgage.RatePeriod> discounted(Mortgage mortgage, List<Mortgage.RatePeriod> agreed) {
+        List<Mortgage.RateDiscount> discounts = mortgage.getRateDiscounts() == null ? List.of() : mortgage.getRateDiscounts();
+        if (discounts.isEmpty() || agreed.isEmpty()) return agreed;
+        List<LocalDate> dues = dues(mortgage);
+        int day = paymentDay(mortgage);
+        record Window(Mortgage.RateDiscount discount, LocalDate from, LocalDate until) {}
+        List<Window> windows = new ArrayList<>();
+        for (var discount : discounts) {
+            int first = discount.getFirstDueDate() == null ? -1 : dues.indexOf(discount.getFirstDueDate());
+            if (first < 0 || discount.getInstallmentCount() == null || discount.getInstallmentCount() < 1
+                    || discount.getDiscountPercent() == null) continue;
+            LocalDate last = dues.get(Math.min(first + discount.getInstallmentCount(), dues.size()) - 1);
+            windows.add(new Window(discount, previousDue(dues.get(first), day), last.minusDays(1)));
+        }
+        windows.sort(Comparator.comparing(Window::from));
+        List<Mortgage.RatePeriod> result = new ArrayList<>();
+        for (var period : agreed) {
+            LocalDate cursor = period.getEffectiveFrom();
+            boolean after = false;
+            for (var window : windows) {
+                if (cursor.isAfter(period.getFixedUntil())) break;
+                if (window.until().isBefore(cursor) || window.from().isAfter(period.getFixedUntil())) continue;
+                LocalDate start = window.from().isAfter(cursor) ? window.from() : cursor;
+                LocalDate end = window.until().isBefore(period.getFixedUntil()) ? window.until() : period.getFixedUntil();
+                if (start.isAfter(cursor)) result.add(piece(period, cursor, start.minusDays(1), after));
+                result.add(promotion(period, window.discount(), start, end));
+                cursor = end.plusDays(1);
+                after = true;
+            }
+            if (!cursor.isAfter(period.getFixedUntil())) result.add(piece(period, cursor, period.getFixedUntil(), after));
+        }
+        return result;
+    }
+
+    /** Part of an agreed period outside any promotion. After one, a calculated installment is worked out again. */
+    private static Mortgage.RatePeriod piece(Mortgage.RatePeriod period, LocalDate from, LocalDate until, boolean afterPromotion) {
+        if (!afterPromotion && from.equals(period.getEffectiveFrom()) && until.equals(period.getFixedUntil())) return period;
+        Mortgage.RatePeriod piece = copy(period, from, until);
+        if (afterPromotion) {
+            piece.setId(period.getId() + "@" + from);
+            if (!"BANK_AGREED".equals(period.getPaymentSource())) uncalculated(piece);
+        }
+        return piece;
+    }
+
+    private static Mortgage.RatePeriod promotion(Mortgage.RatePeriod period, Mortgage.RateDiscount discount, LocalDate from, LocalDate until) {
+        Mortgage.RatePeriod piece = copy(period, from, until);
+        piece.setId(period.getId() + "~" + discount.getId());
+        piece.setAnnualNominalRatePercent(period.getAnnualNominalRatePercent().subtract(discount.getDiscountPercent()).max(ZERO));
+        uncalculated(piece);
+        if (discount.getMonthlyPayment() != null) {
+            piece.setMonthlyPayment(discount.getMonthlyPayment());
+            piece.setPaymentSource("BANK_AGREED");
+        }
+        piece.setSource("PROMOTION");
+        return piece;
+    }
+
+    private static Mortgage.RatePeriod copy(Mortgage.RatePeriod period, LocalDate from, LocalDate until) {
+        Mortgage.RatePeriod copy = new Mortgage.RatePeriod();
+        org.springframework.beans.BeanUtils.copyProperties(period, copy);
+        copy.setEffectiveFrom(from);
+        copy.setFixedUntil(until);
+        return copy;
+    }
+
+    /** The last installment a promotion lowers. */
+    public static LocalDate promotionLastDue(Mortgage mortgage, Mortgage.RateDiscount discount) {
+        List<LocalDate> dues = dues(mortgage);
+        int first = dues.indexOf(discount.getFirstDueDate());
+        return first < 0 || discount.getInstallmentCount() == null ? null
+                : dues.get(Math.min(first + Math.max(1, discount.getInstallmentCount()), dues.size()) - 1);
+    }
+
+    /** The agreed period a derived piece was cut from: its id runs up to the first '~' or '@'. */
+    private static Mortgage.RatePeriod agreedOf(Mortgage mortgage, Mortgage.RatePeriod period) {
+        String id = period.getId();
+        int cut = id.length();
+        for (char mark : new char[] {'~', '@'}) {
+            int at = id.indexOf(mark);
+            if (at >= 0 && at < cut) cut = at;
+        }
+        String agreedId = id.substring(0, cut);
+        return agreedPeriods(mortgage).stream().filter(p -> agreedId.equals(p.getId())).findFirst().orElse(period);
+    }
+
+    /** A piece shown as its agreed period: the fixation does not end where a promotion does. */
+    private static Mortgage.RatePeriod shown(Mortgage mortgage, Mortgage.RatePeriod period) {
+        if (period == null || period.getId() == null) return period;
+        Mortgage.RatePeriod agreed = agreedOf(mortgage, period);
+        if (agreed == period) return period;
+        Mortgage.RatePeriod shown = copy(period, agreed.getEffectiveFrom(), agreed.getFixedUntil());
+        shown.setId(agreed.getId());
+        return shown;
+    }
+
+    private static Mortgage.RateDiscount promotionOf(Mortgage mortgage, Mortgage.RatePeriod period) {
+        if (period == null || period.getId() == null || mortgage.getRateDiscounts() == null) return null;
+        int at = period.getId().indexOf('~');
+        if (at < 0) return null;
+        String id = period.getId().substring(at + 1);
+        return mortgage.getRateDiscounts().stream().filter(d -> id.equals(d.getId())).findFirst().orElse(null);
+    }
+
+    /** No stored installment: the annuity of the balance at its first cycle over the installments left. */
+    private static void uncalculated(Mortgage.RatePeriod piece) {
+        piece.setMonthlyPayment(null);
+        piece.setPaymentSource("CALCULATED");
+        piece.setAnchorDate(null);
+        piece.setCalculationPrincipal(null);
+        piece.setRemainingPaymentCount(null);
+    }
+
+    /** A building savings loan's stored rates are the bridging loan's: they stop at the switch, where the building loan's rate starts. */
+    private static List<Mortgage.RatePeriod> agreedPeriods(Mortgage mortgage) {
         List<Mortgage.RatePeriod> stored = (mortgage.getRatePeriods() == null ? List.<Mortgage.RatePeriod>of() : mortgage.getRatePeriods()).stream()
                 .filter(p -> p.getEffectiveFrom() != null && p.getFixedUntil() != null && p.getAnnualNominalRatePercent() != null)
                 .sorted(Comparator.comparing(Mortgage.RatePeriod::getEffectiveFrom)).toList();
@@ -609,6 +744,10 @@ public class MortgageCalculationService {
     }
 
     public List<LocalDate> dueDates(Mortgage mortgage) {
+        return dues(mortgage);
+    }
+
+    private static List<LocalDate> dues(Mortgage mortgage) {
         if (mortgage.getFirstPaymentDate() == null || mortgage.getMaturityDate() == null) return List.of();
         List<LocalDate> dates = new ArrayList<>();
         YearMonth month = YearMonth.from(mortgage.getFirstPaymentDate());

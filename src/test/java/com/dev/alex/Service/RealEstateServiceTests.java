@@ -374,6 +374,31 @@ class RealEstateServiceTests {
     }
 
     @Test
+    void promotionLowersTheCurrentRateAndCanBeRemoved() {
+        Mortgage loan = createLoan();
+        var view = service.discount(PID, loan.getPropertyId(), loan.getId(), null, new DiscountCommand(loan.getVersion(),
+                LocalDate.of(2026, 11, 1), 12, new BigDecimal("0.3"), null, "Insurance discount", null), "promo");
+        assertEquals(1, loan.getRateDiscounts().size());
+        var summary = onlySummary(view);
+        assertEquals(0, new BigDecimal("3.7").compareTo(summary.currentRatePeriod().getAnnualNominalRatePercent()));
+        assertEquals(0, new MortgageCalculationService().monthlyPayment(new BigDecimal("180000"), new BigDecimal("3.7"), 336)
+                .compareTo(summary.monthlyPayment()));
+        String id = loan.getRateDiscounts().getFirst().getId();
+
+        var overlap = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.discount(PID, loan.getPropertyId(),
+                loan.getId(), null, new DiscountCommand(loan.getVersion(), LocalDate.of(2027, 5, 1), 3, BigDecimal.ONE, null, null, null), "overlap"));
+        assertEquals(409, overlap.getStatus());
+        var offDay = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.discount(PID, loan.getPropertyId(),
+                loan.getId(), null, new DiscountCommand(loan.getVersion(), LocalDate.of(2028, 5, 15), 3, BigDecimal.ONE, null, null, null), "off-day"));
+        assertEquals(400, offDay.getStatus());
+
+        var removed = service.discount(PID, loan.getPropertyId(), loan.getId(), id,
+                new DiscountCommand(loan.getVersion(), null, null, null, null, null, true), "remove");
+        assertTrue(loan.getRateDiscounts().isEmpty());
+        assertEquals(0, new BigDecimal("4").compareTo(onlySummary(removed).currentRatePeriod().getAnnualNominalRatePercent()));
+    }
+
+    @Test
     void overlappingRatePeriodIsRejected() {
         Mortgage loan = createLoan();
         var error = assertThrows(RealEstateServiceImpl.RealEstateException.class, () -> service.rate(PID, loan.getPropertyId(), loan.getId(), null,

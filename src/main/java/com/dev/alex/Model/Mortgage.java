@@ -44,6 +44,11 @@ public class Mortgage {
     private List<RatePeriod> ratePeriods = new ArrayList<>();
     private List<BalanceCheckpoint> balanceCheckpoints = new ArrayList<>();
     private List<Payment> payments = new ArrayList<>();
+    /**
+     * Promotions off the agreed rate, such as 0.3 points off for the first 12 installments. The
+     * calculation applies them on top of ratePeriods, which keep the contract rate.
+     */
+    private List<RateDiscount> rateDiscounts = new ArrayList<>();
     /** Null for an annuity loan. Set for a building savings loan, which works differently until its switch. */
     private BuildingSavings buildingSavings;
     private Instant createdAt;
@@ -66,6 +71,24 @@ public class Mortgage {
         private BigDecimal calculationPrincipal;
         private Integer remainingPaymentCount;
         private String source;
+        private Instant recordedAt;
+    }
+
+    /**
+     * A promotion: the rate in force is lowered by discountPercent points for installmentCount
+     * installments, the first one due on firstDueDate. It covers those installments' whole monthly
+     * cycles, so it never splits one. monthlyPayment: the bank's installment meanwhile; null = worked
+     * out again at the lower rate over the installments left. Either way the end date holds, and after
+     * the promotion a calculated installment is worked out again at the full rate.
+     */
+    @Data @AllArgsConstructor @NoArgsConstructor
+    public static class RateDiscount {
+        private String id;
+        private LocalDate firstDueDate;
+        private Integer installmentCount;
+        private BigDecimal discountPercent;
+        private BigDecimal monthlyPayment;
+        private String note;
         private Instant recordedAt;
     }
 

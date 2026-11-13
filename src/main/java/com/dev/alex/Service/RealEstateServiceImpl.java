@@ -554,6 +554,73 @@ public class RealEstateServiceImpl implements RealEstateService {
         });
     }
 
+    /**
+     * A promotion off the agreed rate for whole installments. Later calculated rate periods were
+     * worked out on a balance without it, so they are worked out again (as after a lowered installment).
+     */
+    public PropertyView discount(String portfolioId, String propertyId, String mortgageId, String discountId,
+                                 DiscountCommand command, String key) {
+        return mutateLoan(portfolioId, propertyId, mortgageId, command.version(),
+                "discount:" + Objects.toString(discountId, "new"), command, key, loan -> {
+            if (loan.getRateDiscounts() == null) loan.setRateDiscounts(new ArrayList<>());
+            List<Mortgage.RateDiscount> discounts = loan.getRateDiscounts();
+            Mortgage.RateDiscount existing = discountId == null ? null : discounts.stream()
+                    .filter(d -> discountId.equals(d.getId())).findFirst().orElseThrow(() -> fail(404, "Promotion not found"));
+            List<LocalDate> dues = calculations.dueDates(loan);
+            if (Boolean.TRUE.equals(command.remove())) {
+                if (existing == null) throw fail(400, "Choose the promotion to remove");
+                discounts.remove(existing);
+                rebaseLaterRates(loan, windowStart(loan, existing.getFirstDueDate()), date -> calculations.balanceAt(loan, date).principalBalance());
+                return;
+            }
+            if (existing == null && discounts.size() >= MAX_EVENTS) throw fail(400, "Promotion limit reached");
+            LocalDate first = required(command.firstDueDate(), "First discounted installment");
+            if (!dueOn(loan, first)) throw fail(400, "The first discounted installment must fall on an installment date");
+            int count = command.installmentCount() == null ? 0 : command.installmentCount();
+            int index = dues.indexOf(first);
+            if (count < 1) throw fail(400, "A promotion lowers at least one installment");
+            if (index < 0 || index + count > dues.size()) throw fail(400, "The promotion cannot run past final maturity");
+            BigDecimal points = money(command.discountPercent(), "Rate discount", false);
+            if (points.signum() <= 0 || points.compareTo(new BigDecimal("100")) > 0) {
+                throw fail(400, "Enter a rate discount above 0 and at most 100 percentage points");
+            }
+            BigDecimal payment = command.monthlyPayment() == null ? null : money(command.monthlyPayment(), "Installment during the promotion", false);
+            if (payment != null && payment.signum() <= 0) throw fail(400, "The installment during the promotion must be above zero");
+            for (var other : discounts) {
+                if (other == existing) continue;
+                int start = dues.indexOf(other.getFirstDueDate());
+                if (start >= 0 && start <= index + count - 1 && index <= start + other.getInstallmentCount() - 1) {
+                    throw fail(409, "Promotions cannot overlap; correct the other promotion first");
+                }
+            }
+            LocalDate since = windowStart(loan, existing == null || first.isBefore(existing.getFirstDueDate()) ? first : existing.getFirstDueDate());
+            if (payment != null) {
+                // The rule a rate period follows: the bank's installment has to repay something.
+                LocalDate opens = windowStart(loan, first);
+                var rate = loan.getRatePeriods().stream().filter(r -> !r.getEffectiveFrom().isAfter(opens)
+                        && !r.getFixedUntil().isBefore(opens)).findFirst();
+                BigDecimal balance = calculations.balanceAt(loan, opens).principalBalance();
+                if (rate.isPresent() && balance != null && balance.signum() > 0 && payment.compareTo(balance
+                        .multiply(rate.get().getAnnualNominalRatePercent().subtract(points).max(ZERO))
+                        .divide(new BigDecimal("1200"), 12, RoundingMode.HALF_UP)) <= 0) {
+                    throw fail(400, "The installment during the promotion must exceed a month's interest");
+                }
+            }
+            Mortgage.RateDiscount value = new Mortgage.RateDiscount(existing == null ? UUID.randomUUID().toString() : existing.getId(),
+                    first, count, points, payment, optional(command.note(), 2000), now());
+            if (existing != null) discounts.remove(existing);
+            discounts.add(value);
+            discounts.sort(Comparator.comparing(Mortgage.RateDiscount::getFirstDueDate));
+            rebaseLaterRates(loan, since, date -> calculations.balanceAt(loan, date).principalBalance());
+        });
+    }
+
+    /** The first day a promotion that starts with this installment lowers the rate: the installment date before it. */
+    private static LocalDate windowStart(Mortgage loan, LocalDate firstDue) {
+        LocalDate before = firstDue.minusMonths(1);
+        return before.withDayOfMonth(Math.min(loan.getPaymentDay(), before.lengthOfMonth()));
+    }
+
     public PropertyView close(String portfolioId, String propertyId, String mortgageId, DateCommand command, String key) {
         return mutateLoan(portfolioId, propertyId, mortgageId, command.version(), "close", command, key, loan -> {
             validLoanActualDate(loan, command.date(), "Close date");
@@ -1079,6 +1146,7 @@ public class RealEstateServiceImpl implements RealEstateService {
         org.springframework.beans.BeanUtils.copyProperties(source, copy);
         copy.setPayments(new ArrayList<>(source.getPayments()));
         copy.setBalanceCheckpoints(new ArrayList<>(source.getBalanceCheckpoints()));
+        copy.setRateDiscounts(source.getRateDiscounts() == null ? new ArrayList<>() : new ArrayList<>(source.getRateDiscounts()));
         copy.setRatePeriods(source.getRatePeriods().stream().map(r -> {
             Mortgage.RatePeriod cloned = new Mortgage.RatePeriod();
             org.springframework.beans.BeanUtils.copyProperties(r, cloned);
