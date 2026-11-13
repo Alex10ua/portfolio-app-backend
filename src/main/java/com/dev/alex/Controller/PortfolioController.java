@@ -25,7 +25,14 @@ public class PortfolioController {
 
     @PostMapping("/createPortfolio")
     public Portfolios createPortfolio(@RequestBody Portfolios portfolio, Authentication authentication) {
-        portfolio.setPortfolioId(UUID.randomUUID().toString().concat(portfolio.getPortfolioName()));
+        if (portfolio.getPortfolioName() == null || portfolio.getPortfolioName().isBlank()) {
+            throw new IllegalArgumentException("Portfolio name is required");
+        }
+        portfolio.setPortfolioName(portfolio.getPortfolioName().trim());
+        // The id goes into every URL path. It used to be UUID + name, so a name with '/', '?',
+        // '#' or '%' produced a portfolio no page or endpoint could address. Ids of existing
+        // portfolios keep their old shape; they are opaque everywhere.
+        portfolio.setPortfolioId(UUID.randomUUID().toString());
         portfolio.setUsername(authentication.getName());
         return portfolioRepository.save(portfolio);
     }

@@ -189,6 +189,41 @@ class PortfolioPerformanceTests {
         verifyNoInteractions(histories);
     }
 
+    @Test
+    void confirmedFullSaleClearsCurrentAndHistoricalValueWithoutChangingCashFlows() {
+        LocalDate purchase = today.minusMonths(4).withDayOfMonth(1);
+        LocalDate closeDate = today.minusMonths(2).withDayOfMonth(15);
+        Transactions close = trade(TransactionType.SELL, closeDate, "1.01", "200", "2");
+        close.setClosesPosition(true);
+        when(transactions.findAllByPortfolioIdOrderByDateAsc("p")).thenReturn(List.of(
+                trade(TransactionType.BUY, purchase, "1", "100", "1"), close));
+        MarketData md = quote("200");
+        md.setSplits(List.of(new Splits(purchase.plusDays(1), new BigDecimal("1.025")),
+                new Splits(closeDate.plusDays(1), new BigDecimal("1.01"))));
+        when(marketData.findByTickerInForPerformance(anyCollection())).thenReturn(List.of(md));
+        when(histories.findDailyByTickerIn(anyCollection())).thenReturn(List.of(history(List.of(
+                new PriceHistoryEntry(purchase, new BigDecimal("100"), new BigDecimal("100"))))));
+
+        PerformanceData data = service.getPerformance("p", "ALL");
+
+        amount("0", data.getCurrentValue());
+        amount("0", data.getUnrealizedPnL());
+        assertTrue(data.getOpenCostBasisByCurrency().isEmpty());
+        amount("99", data.getRealizedPnL());
+        amount("3", data.getRealizedCommissionsByCurrency().get("USD"));
+        assertEquals(2, data.getCashFlows().size());
+        amount("-101", data.getCashFlows().getFirst().amount());
+        amount("200", data.getCashFlows().getLast().amount());
+        assertTrue(data.getTimeSeries().stream().filter(point -> !point.getDate().isBefore(closeDate))
+                .allMatch(point -> point.getPortfolioValue().signum() == 0));
+
+        List<PerformancePoint> history = service.getMonthlyHistory("p");
+        assertTrue(history.stream().anyMatch(point -> point.getDate().isBefore(closeDate)
+                && point.getPortfolioValue().signum() > 0));
+        assertTrue(history.stream().filter(point -> !point.getDate().isBefore(closeDate))
+                .allMatch(point -> point.getPortfolioValue().signum() == 0));
+    }
+
     private Transactions trade(TransactionType type, LocalDate date, String quantity, String price, String fee) {
         Transactions tx = new Transactions();
         tx.setTicker("TEST");

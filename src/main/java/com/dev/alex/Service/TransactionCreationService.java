@@ -1,6 +1,7 @@
 package com.dev.alex.Service;
 
 import com.dev.alex.Model.Transactions;
+import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Repository.TransactionsRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,10 @@ public class TransactionCreationService {
     private MongoTemplate mongoTemplate;
 
     public void prepare(Transactions transaction, String key) {
+        if (Boolean.TRUE.equals(transaction.getClosesPosition())
+                && transaction.getTransactionType() != TransactionType.SELL) {
+            throw new IllegalArgumentException("Only a SELL transaction can close a position");
+        }
         if (key != null && !key.matches("[A-Za-z0-9._:-]{1,128}")) {
             throw new IllegalArgumentException("Idempotency-Key must contain 1-128 letters, digits, '.', '_', ':' or '-'");
         }
@@ -88,6 +93,8 @@ public class TransactionCreationService {
                 canonical.append(value.length()).append(':').append(value);
             }
         }
+        // Legacy hashes must remain identical when this new nullable field is omitted/false.
+        if (Boolean.TRUE.equals(t.getClosesPosition())) canonical.append("closesPosition:true;");
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(canonical.toString().getBytes(StandardCharsets.UTF_8)));

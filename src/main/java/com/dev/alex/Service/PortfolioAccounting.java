@@ -36,10 +36,19 @@ public class PortfolioAccounting {
         if (splitsByTicker != null) splitsByTicker.forEach((ticker, splits) -> {
             if (ticker != null) timelines.put(ticker.toUpperCase(Locale.ROOT), new SplitTimeline(splits, asOf));
         });
-        List<Transactions> trades = transactions == null ? List.of() : transactions.stream()
+        // Split-adjusted share count in the basis of asOf; custom assets have no splits.
+        java.util.function.Function<Transactions, BigDecimal> shares = tx -> {
+            SplitTimeline timeline = timelines.get(tickerOf(tx));
+            boolean market = tx.getAssetType() == null || tx.getAssetType() == Assets.STOCK
+                    || tx.getAssetType() == Assets.CRYPTO;
+            return tx.getQuantity().multiply(market && timeline != null
+                    ? timeline.factorAfter(tx.getDate()) : BigDecimal.ONE);
+        };
+        List<Transactions> trades = TradeOrder.settle(transactions == null ? List.of() : transactions.stream()
                 .filter(tx -> validTrade(tx, asOf))
-                // Stable sorting retains a statement's order for trades on the same calendar day.
-                .sorted(Comparator.comparing(Transactions::getDate)).toList();
+                // Stable sorting retains a statement's order for trades on the same calendar day;
+                // TradeOrder only moves a same-day SELL that would otherwise oversell.
+                .sorted(Comparator.comparing(Transactions::getDate)).toList(), this::tickerOf, shares);
         Map<String, Deque<Lot>> lotsByTicker = new TreeMap<>();
         Map<String, BigDecimal> realized = new TreeMap<>();
         Map<String, BigDecimal> commissions = new TreeMap<>();
@@ -50,15 +59,27 @@ public class PortfolioAccounting {
             String currency = currencyOf(tx.getCurrency());
             BigDecimal fee = tx.getCommission() == null ? BigDecimal.ZERO : tx.getCommission();
             add(commissions, currency, fee);
-            SplitTimeline timeline = timelines.get(ticker);
-            boolean market = tx.getAssetType() == null || tx.getAssetType() == Assets.STOCK
-                    || tx.getAssetType() == Assets.CRYPTO;
-            BigDecimal quantity = tx.getQuantity().multiply(market && timeline != null
-                    ? timeline.factorAfter(tx.getDate()) : BigDecimal.ONE);
+            BigDecimal quantity = shares.apply(tx);
             BigDecimal gross = tx.getQuantity().multiply(tx.getPrice());
             Deque<Lot> lots = lotsByTicker.computeIfAbsent(ticker, ignored -> new ArrayDeque<>());
             if (tx.getTransactionType() == TransactionType.BUY) {
                 lots.addLast(new Lot(quantity, gross.add(fee), fee, currency));
+                continue;
+            }
+
+            // Broker stock-dividend fractions can differ from a provider's split replay. An
+            // explicitly confirmed full sale exhausts the known basis, but its cash proceeds
+            // still come from the actual fill quantity and price. Never infer this from size.
+            if (Boolean.TRUE.equals(tx.getClosesPosition())) {
+                if (!lots.isEmpty()) {
+                    for (Lot lot : lots) {
+                        add(realized, lot.currency, lot.cost.negate());
+                        add(realizedCommissions, lot.currency, lot.fee);
+                    }
+                    add(realized, currency, gross.subtract(fee));
+                    add(realizedCommissions, currency, fee);
+                    lots.clear();
+                }
                 continue;
             }
 

@@ -19,8 +19,10 @@ import org.springframework.web.bind.annotation.RestController;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Performance and profit-and-loss endpoints.
@@ -59,18 +61,24 @@ public class AiPerformanceController {
         PerformanceData raw = performanceService.getPerformance(portfolioId, period);
         List<AiPerformanceData.Point> series = toPoints(
                 downsample(raw == null ? null : raw.getTimeSeries(), resolveMaxPoints(maxPoints)));
+        List<PerformanceData.CashFlow> cashFlows = raw == null || raw.getCashFlows() == null
+                ? List.of() : raw.getCashFlows();
+        Set<String> currencies = returnCurrencies(raw, cashFlows);
+        boolean singleCurrency = currencies.size() == 1;
+        String returnBasis = singleCurrency ? "SINGLE_CURRENCY_NATIVE"
+                : currencies.isEmpty() ? "NO_CURRENCY_DATA" : "MULTI_CURRENCY_REQUIRES_CONVERSION";
 
         AiPerformanceData payload = new AiPerformanceData(
                 period,
                 raw == null ? null : raw.getTotalInvested(),
                 raw == null ? null : raw.getCurrentValue(),
                 raw == null ? null : raw.getUnrealizedPnL(),
-                raw == null ? null : raw.getUnrealizedPnLPct(),
+                raw == null || !singleCurrency ? null : raw.getUnrealizedPnLPct(),
                 raw == null ? null : raw.getRealizedPnL(),
                 raw == null ? null : raw.getTotalDividends(),
                 raw == null ? null : raw.getTotalReturn(),
-                raw == null ? null : raw.getTotalReturnPct(),
-                raw == null ? null : raw.getXirr(),
+                raw == null || !singleCurrency ? null : raw.getTotalReturnPct(),
+                raw == null || !singleCurrency ? null : raw.getXirr(),
                 raw == null ? null : raw.getTotalInvestedByCurrency(),
                 raw == null ? null : raw.getCurrentValueByCurrency(),
                 raw == null ? null : raw.getOpenCostBasisByCurrency(),
@@ -78,11 +86,16 @@ public class AiPerformanceController {
                 raw == null ? null : raw.getCommissionsByCurrency(),
                 raw == null ? null : raw.getRealizedCommissionsByCurrency(),
                 raw == null ? null : raw.getTotalDividendsByCurrency(),
-                series);
+                series,
+                cashFlows,
+                LocalDate.now(),
+                returnBasis,
+                singleCurrency ? currencies.iterator().next() : null);
 
         return envelopeService.wrap(payload,
-                envelopeService.baseCurrency(username, portfolioId, currenciesIn(series)),
-                AiEnvelopeService.NOTE_UNCONVERTED_SCALARS);
+                envelopeService.baseCurrency(username, portfolioId, currencies),
+                AiEnvelopeService.NOTE_UNCONVERTED_SCALARS,
+                AiEnvelopeService.NOTE_PERFORMANCE_RETURNS);
     }
 
     @Operation(summary = "Portfolio value history",
@@ -130,6 +143,23 @@ public class AiPerformanceController {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /** Pence and pounds remain distinct: these are native amounts, not display currency labels. */
+    private static Set<String> returnCurrencies(PerformanceData raw, List<PerformanceData.CashFlow> cashFlows) {
+        Set<String> currencies = new LinkedHashSet<>();
+        if (raw == null) return currencies;
+        for (Map<String, BigDecimal> amounts : java.util.Arrays.asList(
+                raw.getTotalInvestedByCurrency(), raw.getCurrentValueByCurrency(),
+                raw.getOpenCostBasisByCurrency(), raw.getRealizedPnLByCurrency(),
+                raw.getTotalDividendsByCurrency(), raw.getCommissionsByCurrency())) {
+            if (amounts != null) currencies.addAll(amounts.keySet());
+        }
+        for (PerformanceData.CashFlow flow : cashFlows) {
+            if (flow != null) currencies.add(flow.currency());
+        }
+        currencies.removeIf(currency -> currency == null || currency.isBlank());
+        return currencies;
+    }
 
     private static int resolveMaxPoints(Integer requested) {
         if (requested == null || requested <= 0) return DEFAULT_MAX_POINTS;

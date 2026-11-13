@@ -2,6 +2,7 @@ package com.dev.alex.Service.Ai;
 
 import com.dev.alex.Model.CompanyFundamentals;
 import com.dev.alex.Model.MarketData;
+import com.dev.alex.Model.YahooFinancials;
 import com.dev.alex.Model.NonDbModel.Ai.AiTickerData;
 import com.dev.alex.Model.NonDbModel.Ai.AiTickerHistorical;
 import com.dev.alex.Model.NonDbModel.Dividend;
@@ -10,6 +11,7 @@ import com.dev.alex.Model.NonDbModel.TickerHistoricalData;
 import com.dev.alex.Model.SharesOutstandingHistory.SharesHistoryEntry;
 import com.dev.alex.Repository.CompanyFundamentalsRepository;
 import com.dev.alex.Repository.MarketDataRepository;
+import com.dev.alex.Repository.YahooFinancialsRepository;
 import com.dev.alex.Service.MarketDataServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -38,6 +40,8 @@ public class AiTickerAssembler {
     private MarketDataServiceImpl marketDataService;
     @Autowired
     private CompanyFundamentalsRepository fundamentalsRepository;
+    @Autowired
+    private YahooFinancialsRepository financialsRepository;
 
     /** null when the ticker has never been fetched by any provider. */
     public AiTickerData ticker(String ticker) {
@@ -116,6 +120,36 @@ public class AiTickerAssembler {
         });
         doc.setConcepts(trimmed);
         return doc;
+    }
+
+    /** Reads the stored statements only; request bounds never trigger a provider refresh or a save. */
+    public YahooFinancials financials(String ticker, int limitPerItem) {
+        YahooFinancials raw = financialsRepository.findById(ticker).orElse(null);
+        if (raw == null || raw.getUpdatedAt() == null) return null;
+        int limit = Math.clamp(limitPerItem, 1, 20);
+        return new YahooFinancials(raw.getTicker(), raw.getCurrency(),
+                trimStatements(raw.getAnnual(), limit), trimStatements(raw.getTrailing(), limit),
+                raw.getUpdatedAt(), raw.getCheckedAt());
+    }
+
+    private static YahooFinancials.Statements trimStatements(YahooFinancials.Statements raw, int limit) {
+        if (raw == null) return null;
+        return new YahooFinancials.Statements(trimStatement(raw.getIncome(), limit),
+                trimStatement(raw.getBalanceSheet(), limit), trimStatement(raw.getCashFlow(), limit));
+    }
+
+    private static Map<String, List<YahooFinancials.StatementEntry>> trimStatement(
+            Map<String, List<YahooFinancials.StatementEntry>> raw, int limit) {
+        if (raw == null) return null;
+        Map<String, List<YahooFinancials.StatementEntry>> result = new TreeMap<>();
+        raw.forEach((item, entries) -> {
+            if (entries == null) { result.put(item, null); return; }
+            result.put(item, entries.stream().filter(Objects::nonNull)
+                    .sorted(Comparator.comparing(YahooFinancials.StatementEntry::getDate,
+                            Comparator.nullsLast(Comparator.reverseOrder())))
+                    .limit(limit).toList());
+        });
+        return result;
     }
 
     // ---------------------------------------------------------------- derived

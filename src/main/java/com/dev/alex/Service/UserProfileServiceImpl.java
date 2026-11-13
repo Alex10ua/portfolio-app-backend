@@ -26,6 +26,10 @@ public class UserProfileServiceImpl implements UserProfileService {
     private PasswordEncoder passwordEncoder;
     @Autowired
     private ClosedPositionCleanupService closedPositionCleanupService;
+    @Autowired
+    private HoldingServiceImpl holdingService;
+    @Autowired
+    private com.dev.alex.Repository.PortfolioRepository portfolioRepository;
 
     @Override
     public UserProfileResponse getProfile(String username) {
@@ -77,7 +81,12 @@ public class UserProfileServiceImpl implements UserProfileService {
     @Override
     public UserSettings saveSettings(String username, UserSettings settings) {
         settings.setUsername(username); // identity always from the session, never the body
-        closedPositionCleanupService.dropTargetsForUnheldTickers(settings);
+        // Positions as the dashboard derives them from transactions, and only for portfolios this
+        // user owns: the body is client-supplied, and another user's portfolioId must neither be
+        // read nor keep targets here.
+        closedPositionCleanupService.dropTargetsForUnheldTickers(settings, portfolioId ->
+                portfolioRepository.findByPortfolioIdAndUsername(portfolioId, username) == null
+                        ? java.util.List.of() : holdingService.getAllHoldingsByPortfolioId(portfolioId));
         settings.setUpdatedAt(new Date());
         return userSettingsRepository.save(settings);
     }

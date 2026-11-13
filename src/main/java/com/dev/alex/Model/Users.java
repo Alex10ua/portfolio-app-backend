@@ -23,6 +23,9 @@ public class Users {
         this.userId = userId;
     }
 
+    // Unique: registration checks first, but two concurrent sign-ups could both pass that check,
+    // and a duplicate username made findByUsername throw on every later login.
+    @org.springframework.data.mongodb.core.index.Indexed(name = "users_username", unique = true)
     private String username;
     private String email;
     private String displayName;

@@ -1,5 +1,7 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Config.AppClock;
+import com.dev.alex.Config.NotFoundException;
 import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Model.MarketData;
 import com.dev.alex.Model.NonDbModel.PriceHistoryEntry;
@@ -15,11 +17,20 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
 @Transactional
 public class CustomAssetServiceImpl implements CustomAssetService {
+
+    /**
+     * Characters a URL path cannot carry. The ticker is a path segment of every custom-asset
+     * endpoint, and Spring's firewall rejects an encoded '/', '\', '%' or ';' outright, so an
+     * asset named "GOLD 1/2 OZ" could be created but never priced, edited or deleted.
+     */
+    private static final Pattern UNSAFE_TICKER = Pattern.compile("[/\\\\?#%;\\p{Cntrl}]");
+    private static final int MAX_TICKER_LENGTH = 64;
 
     @Autowired
     private CustomAssetRepository customAssetRepository;
@@ -35,15 +46,20 @@ public class CustomAssetServiceImpl implements CustomAssetService {
         if (customAsset.getTicker() == null || customAsset.getTicker().isBlank()) {
             throw new IllegalArgumentException("Ticker is required");
         }
-        String ticker = customAsset.getTicker().toUpperCase();
+        String ticker = customAsset.getTicker().trim().toUpperCase();
+        if (ticker.length() > MAX_TICKER_LENGTH || UNSAFE_TICKER.matcher(ticker).find()) {
+            throw new IllegalArgumentException("Ticker must be at most " + MAX_TICKER_LENGTH
+                    + " characters and must not contain / \\ ? # % or ;");
+        }
         if (customAssetRepository.existsByPortfolioIdAndTicker(portfolioId, ticker)) {
             throw new IllegalArgumentException("Custom asset with ticker '" + ticker + "' already exists in this portfolio");
         }
+        LocalDate today = AppClock.today();
         customAsset.setId(UUID.randomUUID().toString());
         customAsset.setPortfolioId(portfolioId);
         customAsset.setTicker(ticker);
-        customAsset.setCreatedAt(LocalDate.now());
-        customAsset.setUpdatedAt(LocalDate.now());
+        customAsset.setCreatedAt(today);
+        customAsset.setUpdatedAt(today);
 
         // Create corresponding MarketData entry so holdings calculations work
         MarketData existing = marketDataRepository.findByTicker(ticker);
@@ -52,7 +68,7 @@ public class CustomAssetServiceImpl implements CustomAssetService {
             marketData.setTicker(ticker);
             marketData.setName(customAsset.getName());
             marketData.setPrice(customAsset.getPriceNow() != null ? customAsset.getPriceNow() : BigDecimal.ZERO);
-            marketData.setUpdatedAt(LocalDate.now());
+            marketData.setUpdatedAt(today);
             marketDataRepository.save(marketData);
         }
 
@@ -76,7 +92,7 @@ public class CustomAssetServiceImpl implements CustomAssetService {
     @Override
     public CustomAsset findByPortfolioIdAndTicker(String portfolioId, String ticker) {
         return customAssetRepository.findByPortfolioIdAndTicker(portfolioId, ticker.toUpperCase())
-                .orElseThrow(() -> new RuntimeException("Custom asset not found: " + ticker));
+                .orElseThrow(() -> new NotFoundException("Custom asset not found: " + ticker));
     }
 
     @Override
@@ -95,7 +111,7 @@ public class CustomAssetServiceImpl implements CustomAssetService {
         if (updatedAsset.getUnit() != null) existing.setUnit(updatedAsset.getUnit());
         if (updatedAsset.getPriceUpdateMethod() != null) existing.setPriceUpdateMethod(updatedAsset.getPriceUpdateMethod());
         if (updatedAsset.getCustomFields() != null) existing.setCustomFields(updatedAsset.getCustomFields());
-        existing.setUpdatedAt(LocalDate.now());
+        existing.setUpdatedAt(AppClock.today());
 
         // Holdings table reads name/currency from marketData — keep the stub in sync
         if (updatedAsset.getName() != null || updatedAsset.getCurrency() != null) {
@@ -121,95 +137,107 @@ public class CustomAssetServiceImpl implements CustomAssetService {
     }
 
     /**
-     * Records the price at the given date (null = today). A past date only merges
-     * into priceHistory (overwriting a same-date entry); a date on/after the last
-     * price change also updates priceNow and syncs MarketData.
+     * Records the price at the given date (null = today). A date before the current price's
+     * date only merges into priceHistory (overwriting a same-date entry); a date on or after it
+     * also becomes priceNow and syncs MarketData and the holding.
      */
     @Override
     public CustomAsset updatePrice(String portfolioId, String ticker, BigDecimal newPrice, LocalDate date) {
         CustomAsset asset = findByPortfolioIdAndTicker(portfolioId, ticker);
-        LocalDate effectiveDate = (date != null) ? date : LocalDate.now();
-        if (effectiveDate.isAfter(LocalDate.now())) {
+        LocalDate today = AppClock.today();
+        LocalDate effectiveDate = (date != null) ? date : today;
+        if (effectiveDate.isAfter(today)) {
             throw new IllegalArgumentException("Price date cannot be in the future");
         }
 
         // Merge into history by date — same-date update overwrites instead of duplicating
-        Map<LocalDate, BigDecimal> historyMap = new TreeMap<>();
-        for (PriceHistoryEntry e : asset.getPriceHistory()) {
-            if (e.getDate() != null && e.getPrice() != null) historyMap.put(e.getDate(), e.getPrice());
-        }
-
-        // priceNow's own date is the asset's updatedAt; entry on/after it is the new current price
-        boolean isCurrent = asset.getUpdatedAt() == null || !effectiveDate.isBefore(asset.getUpdatedAt());
+        TreeMap<LocalDate, BigDecimal> historyMap = historyOf(asset);
+        LocalDate priceDate = currentPriceDate(asset, historyMap);
+        boolean isCurrent = priceDate == null || !effectiveDate.isBefore(priceDate);
 
         if (isCurrent) {
-            // Preserve the old current price in history under its own change date
-            if (asset.getPriceNow() != null && asset.getUpdatedAt() != null
-                    && !asset.getUpdatedAt().equals(effectiveDate)) {
-                historyMap.putIfAbsent(asset.getUpdatedAt(), asset.getPriceNow());
+            // Preserve the old current price in history under its own date
+            if (asset.getPriceNow() != null && priceDate != null && !priceDate.equals(effectiveDate)) {
+                historyMap.putIfAbsent(priceDate, asset.getPriceNow());
             }
             asset.setPriceNow(newPrice);
-            asset.setUpdatedAt(effectiveDate);
-
-            // Keep MarketData in sync so HoldingsCompleteData picks up the new price
-            MarketData marketData = marketDataRepository.findByTicker(ticker.toUpperCase());
-            if (marketData != null) {
-                marketData.setPriceYesterday(marketData.getPrice());
-                marketData.setPrice(newPrice);
-                marketData.setUpdatedAt(effectiveDate);
-                marketDataRepository.save(marketData);
-            }
+            syncMarketPrice(asset.getTicker(), newPrice, effectiveDate);
             syncHoldingPrice(portfolioId, asset.getTicker(), newPrice);
         }
         historyMap.put(effectiveDate, newPrice);
-
-        asset.setPriceHistory(historyMap.entrySet().stream()
-                .map(e -> new PriceHistoryEntry(e.getKey(), e.getValue()))
-                .collect(Collectors.toList()));
-
+        asset.setPriceHistory(toEntries(historyMap));
+        asset.setUpdatedAt(today);
         return customAssetRepository.save(asset);
     }
 
+    /**
+     * Merges price points by date (new entries overwrite the same date). The current price only
+     * moves when the merged history now ends later than it did, or when the entry for the current
+     * date was corrected: importing an older statement used to reset priceNow, MarketData and
+     * the holding to that statement's last price.
+     */
     public CustomAsset bulkMergePriceHistory(String portfolioId, String ticker, List<PriceHistoryEntry> entries) {
         CustomAsset asset = findByPortfolioIdAndTicker(portfolioId, ticker);
+        TreeMap<LocalDate, BigDecimal> historyMap = historyOf(asset);
+        LocalDate previousDate = currentPriceDate(asset, historyMap);
 
-        // Merge existing + new entries by date (new entries overwrite on same date)
-        Map<LocalDate, BigDecimal> historyMap = new LinkedHashMap<>();
-        for (PriceHistoryEntry e : asset.getPriceHistory()) {
-            if (e.getDate() != null) historyMap.put(e.getDate(), e.getPrice());
-        }
-        LocalDate latestDate = null;
-        BigDecimal latestPrice = null;
-        for (PriceHistoryEntry e : entries) {
-            if (e.getDate() == null || e.getPrice() == null) continue;
+        for (PriceHistoryEntry e : entries == null ? List.<PriceHistoryEntry>of() : entries) {
+            if (e == null || e.getDate() == null || e.getPrice() == null) continue;
             historyMap.put(e.getDate(), e.getPrice());
-            if (latestDate == null || e.getDate().isAfter(latestDate)) {
-                latestDate = e.getDate();
-                latestPrice = e.getPrice();
+        }
+        asset.setPriceHistory(toEntries(historyMap));
+
+        Map.Entry<LocalDate, BigDecimal> latest = historyMap.lastEntry();
+        if (latest != null) {
+            boolean newer = previousDate == null || latest.getKey().isAfter(previousDate);
+            boolean corrected = latest.getKey().equals(previousDate)
+                    && (asset.getPriceNow() == null || latest.getValue().compareTo(asset.getPriceNow()) != 0);
+            if (newer || corrected) {
+                asset.setPriceNow(latest.getValue());
+                syncMarketPrice(asset.getTicker(), latest.getValue(), latest.getKey());
+                syncHoldingPrice(portfolioId, asset.getTicker(), latest.getValue());
             }
         }
+        asset.setUpdatedAt(AppClock.today());
+        return customAssetRepository.save(asset);
+    }
 
-        List<PriceHistoryEntry> merged = historyMap.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
+    /**
+     * The date priceNow belongs to: the newest history point, or the creation day for an asset
+     * whose price was never updated (create() records no history point). updatedAt is not it —
+     * a name or unit edit stamps that too, which made a back-dated price that was in fact the
+     * newest one land in history only, and filed the old price under the edit date.
+     */
+    private static LocalDate currentPriceDate(CustomAsset asset, NavigableMap<LocalDate, BigDecimal> history) {
+        if (!history.isEmpty()) return history.lastKey();
+        return asset.getCreatedAt() != null ? asset.getCreatedAt() : asset.getUpdatedAt();
+    }
+
+    private static TreeMap<LocalDate, BigDecimal> historyOf(CustomAsset asset) {
+        TreeMap<LocalDate, BigDecimal> history = new TreeMap<>();
+        if (asset.getPriceHistory() != null) {
+            for (PriceHistoryEntry e : asset.getPriceHistory()) {
+                if (e != null && e.getDate() != null && e.getPrice() != null) history.put(e.getDate(), e.getPrice());
+            }
+        }
+        return history;
+    }
+
+    private static List<PriceHistoryEntry> toEntries(Map<LocalDate, BigDecimal> history) {
+        return history.entrySet().stream()
                 .map(e -> new PriceHistoryEntry(e.getKey(), e.getValue()))
                 .collect(Collectors.toList());
-        asset.setPriceHistory(merged);
+    }
 
-        if (latestPrice != null) {
-            asset.setPriceNow(latestPrice);
-            asset.setUpdatedAt(latestDate);
-
-            MarketData marketData = marketDataRepository.findByTicker(ticker.toUpperCase());
-            if (marketData != null) {
-                marketData.setPriceYesterday(marketData.getPrice());
-                marketData.setPrice(latestPrice);
-                marketData.setUpdatedAt(latestDate);
-                marketDataRepository.save(marketData);
-            }
-            syncHoldingPrice(portfolioId, asset.getTicker(), latestPrice);
+    /** Keep MarketData in sync so HoldingsCompleteData picks up the new price. */
+    private void syncMarketPrice(String ticker, BigDecimal price, LocalDate asOf) {
+        MarketData marketData = marketDataRepository.findByTicker(ticker.toUpperCase());
+        if (marketData != null) {
+            marketData.setPriceYesterday(marketData.getPrice());
+            marketData.setPrice(price);
+            marketData.setUpdatedAt(asOf);
+            marketDataRepository.save(marketData);
         }
-
-        return customAssetRepository.save(asset);
     }
 
     /**

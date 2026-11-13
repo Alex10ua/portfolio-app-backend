@@ -10,7 +10,6 @@ import com.dev.alex.Model.NonDbModel.WatchlistEntry;
 import com.dev.alex.Model.NonDbModel.WatchlistEntry.YieldPoint;
 import com.dev.alex.Model.WatchlistItem;
 import com.dev.alex.Repository.CustomAssetRepository;
-import com.dev.alex.Repository.HoldingsRepository;
 import com.dev.alex.Repository.MarketDataRepository;
 import com.dev.alex.Repository.MonthlyPriceHistoryRepository;
 import com.dev.alex.Repository.WatchlistRepository;
@@ -49,11 +48,11 @@ public class WatchlistServiceImpl implements WatchlistService {
     @Autowired
     private MonthlyPriceHistoryRepository monthlyPriceHistoryRepository;
     @Autowired
-    private HoldingsRepository holdingsRepository;
-    @Autowired
     private CustomAssetRepository customAssetRepository;
     @Autowired
     private FlaskClientService flaskClientService;
+    @Autowired
+    private HoldingServiceImpl holdingService;
 
     // ---------- QUERIES ----------
 
@@ -68,8 +67,7 @@ public class WatchlistServiceImpl implements WatchlistService {
                 .collect(Collectors.toMap(MarketData::getTicker, md -> md, (a, b) -> a));
         Map<String, MonthlyPriceHistory> historyByTicker = monthlyPriceHistoryRepository.findMonthlyByTickerIn(tickers)
                 .stream().collect(Collectors.toMap(MonthlyPriceHistory::getTicker, h -> h, (a, b) -> a));
-        Set<String> heldTickers = holdingsRepository.findAllByPortfolioId(portfolioId).stream()
-                .map(Holdings::getTicker).collect(Collectors.toSet());
+        Set<String> heldTickers = heldTickers(portfolioId);
 
         return items.stream()
                 .map(item -> toEntry(item,
@@ -287,7 +285,8 @@ public class WatchlistServiceImpl implements WatchlistService {
         if (dividends == null || dividends.isEmpty()) return null;
         LocalDate cutoff = LocalDate.now().minusYears(1);
         long payments = dividends.stream()
-                .filter(d -> d != null && d.getDividendDate() != null && d.getDividendDate().isAfter(cutoff))
+                .filter(d -> d != null && d.getDividendAmount() != null
+                        && d.getDividendDate() != null && d.getDividendDate().isAfter(cutoff))
                 .count();
         if (payments >= 10) return "Monthly";
         if (payments >= 3) return "Quarterly";
@@ -336,7 +335,17 @@ public class WatchlistServiceImpl implements WatchlistService {
     }
 
     private boolean isHeld(String portfolioId, String ticker) {
-        return holdingsRepository.findByPortfolioIdAndTicker(portfolioId, ticker) != null;
+        return heldTickers(portfolioId).contains(ticker);
+    }
+
+    /**
+     * Held = a position the dashboard shows, derived from transactions. A stored holding row can
+     * be missing (an import whose holding processing failed) or lag a write.
+     */
+    private Set<String> heldTickers(String portfolioId) {
+        return holdingService.getAllHoldingsByPortfolioId(portfolioId).stream()
+                .map(Holdings::getTicker).filter(java.util.Objects::nonNull)
+                .map(String::toUpperCase).collect(Collectors.toSet());
     }
 
     private String normalize(String ticker) {

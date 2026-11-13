@@ -20,6 +20,15 @@ class DividendUtilsTest {
     private final DividendUtils utils = new DividendUtils();
 
     @Test
+    void sameDayTradeEnteredSellFirstLeavesNoShares() {
+        var timeline = utils.prepareEntitlements(List.of(
+                trade("2024-05-10", TransactionType.SELL, "5"),
+                trade("2024-05-10", TransactionType.BUY, "5")), List.of());
+
+        amount("0", timeline.sharesBefore(LocalDate.parse("2024-05-11")));
+    }
+
+    @Test
     void excludesBothKindsOfTradeOnTheExDate() {
         var timeline = utils.prepareEntitlements(List.of(
                 trade("2024-05-10", TransactionType.BUY, "7"),
@@ -74,6 +83,27 @@ class DividendUtilsTest {
     }
 
     @Test
+    void closingSaleKeepsItsExDateDividendAndStopsLaterIncomeUntilReopening() {
+        Transactions close = trade("2025-03-01", TransactionType.SELL, "1");
+        close.setClosesPosition(true);
+        List<Transactions> trades = List.of(trade("2025-01-01", TransactionType.BUY, "1"), close,
+                trade("2025-05-01", TransactionType.BUY, "2"));
+        List<Splits> splits = List.of(split("2025-02-01", "1.02"), split("2025-04-01", "1.01"));
+        var timeline = utils.prepareEntitlements(trades, splits);
+
+        amount("1.0302", timeline.sharesBefore(LocalDate.parse("2025-03-01")));
+        amount("0", timeline.sharesBefore(LocalDate.parse("2025-03-02")));
+        amount("0", timeline.sharesBefore(LocalDate.parse("2025-04-02")));
+        amount("0", timeline.sharesBefore(LocalDate.parse("2025-05-01")));
+        amount("2", timeline.sharesBefore(LocalDate.parse("2025-05-02")));
+
+        var totals = utils.calculateDividends(List.of(dividend("2025-03-01", "1"),
+                dividend("2025-04-01", "1"), dividend("2025-05-02", "1")), trades, splits);
+        amount("3.0302", totals.total());
+        assertEquals(2, totals.byMonth().size());
+    }
+
+    @Test
     void preparedTimelineMatchesIndependentReplayForUnsortedHistory() {
         Random random = new Random(7391);
         LocalDate start = LocalDate.of(2015, 1, 1);
@@ -97,18 +127,45 @@ class DividendUtilsTest {
         }
     }
 
+    /**
+     * Brute-force reference. Within a day, trades keep their recorded order except that a SELL
+     * needing more shares than are held waits for that day's remaining BUYs.
+     */
     private BigDecimal replay(LocalDate exDate, List<Transactions> trades, List<Splits> splits) {
         BigDecimal shares = BigDecimal.ZERO;
+        java.util.Map<LocalDate, List<Transactions>> byDay = new java.util.TreeMap<>();
         for (Transactions tx : trades.stream().filter(t -> t.getDate().isBefore(exDate))
                 .sorted(Comparator.comparing(Transactions::getDate)).toList()) {
-            BigDecimal quantity = tx.getQuantity();
-            for (Splits split : splits) {
-                if (tx.getDate().isBefore(split.getSplitDate())) quantity = quantity.multiply(split.getRatioSplit());
+            byDay.computeIfAbsent(tx.getDate(), d -> new ArrayList<>()).add(tx);
+        }
+        for (List<Transactions> day : byDay.values()) {
+            List<Transactions> pending = new ArrayList<>(day);
+            while (!pending.isEmpty()) {
+                Transactions next = null;
+                for (Transactions tx : pending) {
+                    boolean buyPending = pending.stream()
+                            .anyMatch(o -> o != tx && o.getTransactionType() == TransactionType.BUY);
+                    if (tx.getTransactionType() == TransactionType.SELL && buyPending
+                            && adjusted(tx, splits).compareTo(shares) > 0) continue;
+                    next = tx;
+                    break;
+                }
+                Transactions chosen = next;
+                pending.removeIf(o -> o == chosen);
+                BigDecimal quantity = adjusted(chosen, splits);
+                shares = chosen.getTransactionType() == TransactionType.BUY
+                        ? shares.add(quantity) : shares.subtract(quantity).max(BigDecimal.ZERO);
             }
-            shares = tx.getTransactionType() == TransactionType.BUY
-                    ? shares.add(quantity) : shares.subtract(quantity).max(BigDecimal.ZERO);
         }
         return shares;
+    }
+
+    private BigDecimal adjusted(Transactions tx, List<Splits> splits) {
+        BigDecimal quantity = tx.getQuantity();
+        for (Splits split : splits) {
+            if (tx.getDate().isBefore(split.getSplitDate())) quantity = quantity.multiply(split.getRatioSplit());
+        }
+        return quantity;
     }
 
     private Transactions trade(String date, TransactionType type, String quantity) {

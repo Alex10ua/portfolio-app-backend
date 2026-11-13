@@ -1,6 +1,7 @@
 package com.dev.alex.Controller.Ai;
 
 import com.dev.alex.Model.CompanyFundamentals;
+import com.dev.alex.Model.YahooFinancials;
 import com.dev.alex.Model.NonDbModel.Ai.AiEnvelope;
 import com.dev.alex.Model.NonDbModel.Ai.AiTickerData;
 import com.dev.alex.Model.NonDbModel.Ai.AiTickerHistorical;
@@ -75,6 +76,22 @@ public class AiTickerController {
                 "Values are as reported to the SEC, in the filing's own currency (US filers report USD). "
                         + "Each entry names the form it came from; a concept the company never reported is "
                         + "absent rather than zero."));
+    }
+
+    @Operation(summary = "Stored Yahoo annual and trailing financial statements",
+            description = "Income, balance sheet and cash flow in reporting currency, including non-US issuers. "
+                    + "Newest periods first, bounded per line item. Never fetches or refreshes provider data.")
+    @GetMapping("/{ticker}/financials")
+    public ResponseEntity<AiEnvelope<YahooFinancials>> financials(@PathVariable String ticker,
+            @RequestParam(defaultValue = "5") int limit) {
+        YahooFinancials data = assembler.financials(normalize(ticker), limit);
+        if (data == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(envelopeService.wrap(data, data.getCurrency(),
+                "Financial figures use the company's reporting currency, which may differ from its quote currency. "
+                        + "Share counts are shares and EPS is currency per share; these are not all currency amounts. "
+                        + "annual and trailing mean fiscal years and trailing twelve months. Line-item series are "
+                        + "newest first, capped to limit (1-20). Absent statements/items are unknown, not zero. "
+                        + "updatedAt is the stored snapshot date; this read does not refresh it."));
     }
 
     private static String normalize(String ticker) {

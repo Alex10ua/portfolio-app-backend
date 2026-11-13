@@ -63,9 +63,9 @@ public class AiPortfolioController {
         return envelopeService.wrap(summaries, base);
     }
 
-    @Operation(summary = "Complete portfolio snapshot",
-            description = "Whole state of one portfolio in one call: positions, cash, realized P&L and "
-                    + "value totals already grouped by currency.")
+    @Operation(summary = "Investment portfolio snapshot",
+            description = "Investment positions, cash, realized P&L and value totals grouped by currency. "
+                    + "Use the wealth endpoint to include property equity and debt.")
     @GetMapping("/{portfolioId}/snapshot")
     public AiEnvelope<AiSnapshot> snapshot(@PathVariable String portfolioId, Authentication authentication) {
         String username = authentication.getName();
@@ -73,7 +73,8 @@ public class AiPortfolioController {
         AiSnapshot snapshot = assembler.snapshot(portfolioId, username);
         return envelopeService.wrap(snapshot,
                 baseCurrency(username, portfolioId, snapshot.positions()),
-                AiEnvelopeService.NOTE_CASH_BALANCE, AiEnvelopeService.NOTE_POSITION_CURRENCIES);
+                AiEnvelopeService.NOTE_CASH_BALANCE, AiEnvelopeService.NOTE_POSITION_CURRENCIES,
+                "This snapshot covers investments and cash. The wealth endpoint also includes property equity and debt.");
     }
 
     @Operation(summary = "Positions only",

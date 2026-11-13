@@ -153,7 +153,7 @@ public class AiPortfolioAssembler {
                     h.getTicker(),
                     h.getName(),
                     h.getAssetType(),
-                    h.getShareAmount(),
+                    h.getExactShareAmount() == null ? h.getShareAmount() : h.getExactShareAmount(),
                     h.getCostPerShare(),
                     h.getCostBasis(),
                     h.getCurrentShareValue(),

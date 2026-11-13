@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Config.AppClock;
 import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Enums.TransactionType;
@@ -66,7 +67,7 @@ public class PortfolioPerformanceServiceImpl {
     }
 
     public PerformanceData getPerformance(String portfolioId, String period) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = AppClock.today();
         List<Transactions> allTx = transactionsAsOf(portfolioId, today);
         List<Holdings> holdings = holdingsRepository.findAllByPortfolioId(portfolioId);
         Map<String, TickerContext> contexts = loadTickerContexts(portfolioId, holdings, allTx);
@@ -132,7 +133,7 @@ public class PortfolioPerformanceServiceImpl {
 
     /** Dashboard fees and realized gains, without loading prices or historical series. */
     public PnlSummary getPnlSummary(String portfolioId) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = AppClock.today();
         List<Transactions> allTx = transactionsAsOf(portfolioId, today);
         Set<String> tickers = allTx.stream().filter(PortfolioPerformanceServiceImpl::isMarket)
                 .map(Transactions::getTicker).filter(Objects::nonNull).collect(Collectors.toSet());
@@ -271,15 +272,22 @@ public class PortfolioPerformanceServiceImpl {
         }
         Map<String, NavigableMap<LocalDate, BigDecimal>> timelines = new HashMap<>();
         Map<String, BigDecimal> balances = new HashMap<>();
-        for (Transactions tx : allTx) {
-            if (!isTrade(tx) || tx.getTicker() == null || tx.getQuantity() == null || tx.getQuantity().signum() <= 0
-                    || tx.getPrice() == null || tx.getPrice().signum() < 0) continue;
+        java.util.function.Function<Transactions, BigDecimal> todayBasis = tx -> {
             NavigableMap<LocalDate, BigDecimal> factors = splitFactors.get(tx.getTicker());
             Map.Entry<LocalDate, BigDecimal> factor = factors == null ? null : factors.higherEntry(tx.getDate());
-            BigDecimal quantity = tx.getQuantity().multiply(factor == null ? BigDecimal.ONE : factor.getValue());
+            return tx.getQuantity().multiply(factor == null ? BigDecimal.ONE : factor.getValue());
+        };
+        // allTx is date-ordered; same-day trades settle as in PortfolioAccounting.
+        List<Transactions> trades = TradeOrder.settle(allTx.stream()
+                .filter(tx -> isTrade(tx) && tx.getTicker() != null && tx.getQuantity() != null
+                        && tx.getQuantity().signum() > 0 && tx.getPrice() != null && tx.getPrice().signum() >= 0)
+                .toList(), Transactions::getTicker, todayBasis);
+        for (Transactions tx : trades) {
+            BigDecimal quantity = todayBasis.apply(tx);
             BigDecimal previous = balances.getOrDefault(tx.getTicker(), ZERO);
             BigDecimal balance = tx.getTransactionType() == TransactionType.BUY
-                    ? previous.add(quantity) : previous.subtract(quantity).max(ZERO);
+                    ? previous.add(quantity) : Boolean.TRUE.equals(tx.getClosesPosition())
+                    ? ZERO : previous.subtract(quantity).max(ZERO);
             balances.put(tx.getTicker(), balance);
             timelines.computeIfAbsent(tx.getTicker(), k -> new TreeMap<>()).put(tx.getDate(), balance);
         }
@@ -319,7 +327,7 @@ public class PortfolioPerformanceServiceImpl {
     }
 
     public List<PerformancePoint> getMonthlyHistory(String portfolioId) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = AppClock.today();
         List<Transactions> allTx = transactionsAsOf(portfolioId, today);
         Map<String, TickerContext> contexts = loadTickerContexts(portfolioId,
                 holdingsRepository.findAllByPortfolioId(portfolioId), allTx);
@@ -390,7 +398,7 @@ public class PortfolioPerformanceServiceImpl {
         for (PerformanceData.CashFlow cf : cashFlows) {
             flows.add(new double[]{cf.date().toEpochDay(), cf.amount().doubleValue()});
         }
-        flows.add(new double[]{LocalDate.now().toEpochDay(), currentValue.doubleValue()});
+        flows.add(new double[]{AppClock.today().toEpochDay(), currentValue.doubleValue()});
         double t0 = flows.get(0)[0];
         double r = 0.1;
         for (int i = 0; i < 200; i++) {

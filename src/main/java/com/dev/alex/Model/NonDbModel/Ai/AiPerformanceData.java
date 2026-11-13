@@ -1,5 +1,7 @@
 package com.dev.alex.Model.NonDbModel.Ai;
 
+import com.dev.alex.Model.NonDbModel.PerformanceData;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -22,7 +24,7 @@ public record AiPerformanceData(
         BigDecimal totalDividendsUnconvertedNativeSum,
         BigDecimal totalReturnUnconvertedNativeSum,
         BigDecimal totalReturnPercent,
-        /** Money-weighted annual return, in percent, over unconverted native amounts. */
+        /** Native-currency annual return; null when the amounts require currency conversion. */
         BigDecimal xirrPercent,
         /** BUY cost plus commission, per transaction currency. */
         Map<String, BigDecimal> totalInvestedByCurrency,
@@ -38,7 +40,14 @@ public record AiPerformanceData(
         Map<String, BigDecimal> realizedCommissionsByCurrency,
         /** DIVIDEND transactions, per transaction currency. */
         Map<String, BigDecimal> totalDividendsByCurrency,
-        List<Point> timeSeries) {
+        List<Point> timeSeries,
+        /** Booked flows, without a terminal value; consumers convert before solving XIRR. */
+        List<PerformanceData.CashFlow> cashFlows,
+        /** The date of the terminal value in currentValueByCurrency. */
+        LocalDate valuationDate,
+        /** SINGLE_CURRENCY_NATIVE, MULTI_CURRENCY_REQUIRES_CONVERSION or NO_CURRENCY_DATA. */
+        String returnCalculationBasis,
+        String returnCurrency) {
 
     public record Point(LocalDate date, Map<String, BigDecimal> valueByCurrency,
                         List<String> estimatedPriceTickers) {

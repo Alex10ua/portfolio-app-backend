@@ -109,7 +109,9 @@ public class MarketDataServiceImpl implements MarketDataService {
                 data.getTicker(),
                 data.getName(),
                 data.getCurrency(),
-                sortedByDate(data.getDividends(), Dividend::getDividendDate),
+                // A missing provider amount is not a zero payment in the dividend-growth chart.
+                sortedByDate(data.getDividends(), Dividend::getDividendDate).stream()
+                        .filter(dividend -> dividend.getDividendAmount() != null).toList(),
                 sortedByDate(data.getSplits(), Splits::getSplitDate),
                 shares
         );

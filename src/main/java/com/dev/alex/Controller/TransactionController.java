@@ -1,5 +1,6 @@
 package com.dev.alex.Controller;
 
+import com.dev.alex.Config.NotFoundException;
 import com.dev.alex.Model.CustomAsset;
 import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Enums.TransactionType;
@@ -193,7 +194,7 @@ public class TransactionController {
         // Read the stored row first: an edit may move the transaction to a different ticker, and
         // the ticker it is leaving has to be recalculated too or its holding keeps the shares.
         Transactions before = transactionsRepository.findById(transactionId)
-                .orElseThrow(() -> new RuntimeException("Transaction not found"));
+                .orElseThrow(() -> new NotFoundException("Transaction not found"));
         if (!portfolioId.equals(before.getPortfolioId())) {
             throw new AccessDeniedException("Transaction does not belong to this portfolio");
         }
@@ -233,7 +234,7 @@ public class TransactionController {
             @PathVariable String transactionId, Authentication authentication) {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         Transactions transaction = transactionsRepository.findById(transactionId)
-                .orElseThrow(() -> new RuntimeException("Transaction not found"));
+                .orElseThrow(() -> new NotFoundException("Transaction not found"));
         if (!portfolioId.equals(transaction.getPortfolioId())) {
             throw new AccessDeniedException("Transaction does not belong to this portfolio");
         }

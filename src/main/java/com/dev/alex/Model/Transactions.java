@@ -55,6 +55,8 @@ public class Transactions {
     private BigDecimal totalAmount;
     private String currency;
     private BigDecimal commission;
+    /** User-confirmed full SELL: reconcile the remaining lots without changing the broker fill. */
+    private Boolean closesPosition;
     @Indexed(name = "transactions_import_batch")
     private String importBatchId;
     // Nullable additive metadata: legacy/imported rows are outside the partial unique index.

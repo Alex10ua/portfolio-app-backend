@@ -46,7 +46,13 @@ public class UsersController {
         user.setUserId(uuid.concat(user.getUsername()));
         user.setPasswordHash(passwordEncoder.encode(user.getPasswordHash()));
         user.setCreatedAt(new Date());
-        Users saved = usersRepository.save(user);
+        Users saved;
+        try {
+            saved = usersRepository.insert(user);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // lost a race with a concurrent registration of the same name (unique index)
+            throw new IllegalArgumentException("Username already taken");
+        }
         return new UserProfileResponse(saved.getUsername(), saved.getEmail(), saved.getDisplayName(), saved.getCreatedAt());
     }
 

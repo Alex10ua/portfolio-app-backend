@@ -52,8 +52,12 @@ public class DividendCalendarServiceImpl implements DividendCalendarService {
                         String ticker = entry.getKey();
                         BigDecimal quantity = entry.getValue();
                         MarketData marketData = marketByTicker.get(ticker);
-                        if (marketData == null || marketData.getLastDividendPayment() == null
-                                        || marketData.getDividends() == null) {
+                        // The dividend history decides, as in the yeared calendar. lastDividendPayment
+                        // is Yahoo's lastDividendValue, which many payers (ETFs above all) lack, and
+                        // gating on it left them out of the projection Self-Funding reads its
+                        // cadence from.
+                        if (marketData == null || marketData.getDividends() == null
+                                        || marketData.getDividends().isEmpty()) {
                                 continue;
                         }
                         List<Dividend> dividendList = marketData.getDividends().stream()

@@ -69,6 +69,14 @@ public class AiEnvelopeService {
             "sharesHistory is sparse: a point exists only where the share count changed. Carry the last "
                     + "value forward rather than interpolating between points.";
 
+    public static final String NOTE_PERFORMANCE_RETURNS =
+            "Return percentages and xirrPercent are null when native amounts span currencies. "
+                    + "cashFlows contains dated BUY, SELL and DIVIDEND flows in their booked currencies, "
+                    + "without a terminal value. Convert each flow and currentValueByCurrency into the "
+                    + "same currency, append the converted terminal value at valuationDate, then solve "
+                    + "XIRR. The supplied FX rates are current, not historical, so a mixed-currency return "
+                    + "calculated with them is an estimate. Investment performance excludes property and cash.";
+
     public static final String NOTE_CASH_BALANCE =
             "derivedCashBalance currently sums DEPOSIT and WITHDRAWAL transactions only — BUY, SELL, "
                     + "DIVIDEND and TAX cash flows are not yet included, so treat it as a deposit ledger "

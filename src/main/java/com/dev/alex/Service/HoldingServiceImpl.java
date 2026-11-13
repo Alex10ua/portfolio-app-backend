@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Config.AppClock;
 import com.dev.alex.Model.Enums.Assets;
 import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Holdings;
@@ -70,7 +71,7 @@ public class HoldingServiceImpl implements HoldingsService {
      * Stored holding rows supply descriptive metadata only.
      */
     public HoldingsSnapshot getPortfolioHoldingsSnapshot(String portfolioId) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = AppClock.today();
         List<Transactions> transactions = transactionService.findAllByPortfolioId(portfolioId);
         List<Holdings> stored = holdingsRepository.findAllByPortfolioId(portfolioId);
         Map<String, Holdings> storedByTicker = new HashMap<>();
@@ -437,12 +438,12 @@ public class HoldingServiceImpl implements HoldingsService {
             holding.setCurrency(transactions.stream()
                     .filter(tx -> tx.getTransactionType() == TransactionType.BUY && tx.getCurrency() != null)
                     .findFirst().map(Transactions::getCurrency).orElse(null));
-            holding.setCreatedAt(transactions.isEmpty() ? LocalDate.now() : transactions.get(0).getDate());
+            holding.setCreatedAt(transactions.isEmpty() ? AppClock.today() : transactions.get(0).getDate());
         }
 
         holding.setQuantity(totalShares);
         holding.setAveragePurchasePrice(avgPrice);
-        holding.setUpdatedAt(LocalDate.now());
+        holding.setUpdatedAt(AppClock.today());
         holdingsRepository.save(holding);
 
         // Every other recalc path drops a zeroed-out holding; without this an edit that sells the
@@ -467,7 +468,7 @@ public class HoldingServiceImpl implements HoldingsService {
         if (splitsList != null) for (Transactions tx : transactionsList) {
             if (tx.getTicker() != null) splitsByTicker.put(tx.getTicker().toUpperCase(Locale.ROOT), splitsList);
         }
-        PortfolioAccounting.Result result = portfolioAccounting.calculate(transactionsList, splitsByTicker, LocalDate.now());
+        PortfolioAccounting.Result result = portfolioAccounting.calculate(transactionsList, splitsByTicker, AppClock.today());
         if (result.positions().isEmpty()) return new Position(BigDecimal.ZERO, BigDecimal.ZERO);
         PortfolioAccounting.Position position = result.positions().values().iterator().next();
         return new Position(position.quantity(), position.costBasis() == null ? BigDecimal.ZERO

@@ -59,11 +59,22 @@ public class ClosedPositionCleanupService {
      * write the removed target straight back.
      */
     public void dropTargetsForUnheldTickers(UserSettings settings) {
+        dropTargetsForUnheldTickers(settings, portfolioId -> holdingsRepository.findAllByPortfolioId(portfolioId));
+    }
+
+    /**
+     * Same, with the holdings supplied by the caller. The settings save passes the positions
+     * derived from transactions: a stored holding row can be missing (an import whose holding
+     * processing failed), and reading stored rows then silently dropped a target the user had
+     * just set on a position the dashboard shows.
+     */
+    public void dropTargetsForUnheldTickers(UserSettings settings,
+                                            java.util.function.Function<String, List<Holdings>> holdingsOf) {
         if (settings == null || settings.getPortfolioSettings() == null) return;
         for (Map.Entry<String, UserSettings.PortfolioSettings> entry : settings.getPortfolioSettings().entrySet()) {
             UserSettings.PortfolioSettings ps = entry.getValue();
             if (ps == null || ps.getTargets() == null || ps.getTargets().isEmpty()) continue;
-            Set<String> held = holdingsRepository.findAllByPortfolioId(entry.getKey()).stream()
+            Set<String> held = holdingsOf.apply(entry.getKey()).stream()
                     .map(Holdings::getTicker)
                     .filter(t -> t != null)
                     .map(String::toUpperCase)

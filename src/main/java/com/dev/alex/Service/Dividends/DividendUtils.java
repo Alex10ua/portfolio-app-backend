@@ -66,23 +66,29 @@ public class DividendUtils {
             suffixFactors.put(split.getKey(), factor);
         }
 
-        List<Transactions> ordered = transactions == null ? List.of() : transactions.stream()
+        // A trade on the split date is already post-split: use strictly later splits.
+        java.util.function.Function<Transactions, BigDecimal> todayBasis = tx -> {
+            Map.Entry<LocalDate, BigDecimal> suffix = suffixFactors.higherEntry(tx.getDate());
+            return tx.getQuantity().multiply(suffix == null ? BigDecimal.ONE : suffix.getValue());
+        };
+        // Same-day trades settle as in PortfolioAccounting, so a day's closing balance agrees.
+        List<Transactions> ordered = com.dev.alex.Service.TradeOrder.settle(transactions == null ? List.of()
+                : transactions.stream()
                 .filter(tx -> tx != null && tx.getDate() != null && tx.getQuantity() != null
                         && (tx.getTransactionType() == TransactionType.BUY
                             || tx.getTransactionType() == TransactionType.SELL))
                 .sorted(Comparator.comparing(Transactions::getDate))
-                .toList();
+                .toList(), tx -> "", todayBasis);
         NavigableMap<LocalDate, BigDecimal> balances = new TreeMap<>();
         BigDecimal sharesHeld = ZERO;
         for (Transactions tx : ordered) {
-            // A trade on the split date is already post-split: use strictly later splits.
-            Map.Entry<LocalDate, BigDecimal> suffix = suffixFactors.higherEntry(tx.getDate());
-            BigDecimal quantity = tx.getQuantity().multiply(suffix == null ? BigDecimal.ONE : suffix.getValue());
+            BigDecimal quantity = todayBasis.apply(tx);
             if (tx.getTransactionType() == TransactionType.BUY) {
                 sharesHeld = sharesHeld.add(quantity);
             } else {
                 // oversell (e.g. a partial import missing its BUYs) is clamped, never negative
-                sharesHeld = sharesHeld.subtract(quantity).max(ZERO);
+                sharesHeld = Boolean.TRUE.equals(tx.getClosesPosition())
+                        ? ZERO : sharesHeld.subtract(quantity).max(ZERO);
             }
             balances.put(tx.getDate(), sharesHeld);
         }

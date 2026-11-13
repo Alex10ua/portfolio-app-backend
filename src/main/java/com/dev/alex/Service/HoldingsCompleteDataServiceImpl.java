@@ -51,11 +51,18 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                 for (Holdings holding : allHolding) {
                         HoldingsCompleteData row = new HoldingsCompleteData();
                         boolean isStock = holding.getAssetType() == Assets.STOCK;
+                        // Coins are market data too (CoinGecko): their name and previous close live on
+                        // the marketData doc. The stored holding never gets a name on the market path,
+                        // so crypto rows used to show no name and no day's change.
+                        boolean isMarket = isStock || holding.getAssetType() == Assets.CRYPTO;
                         MarketData marketData = marketDataByTicker.get(holding.getTicker().toUpperCase());
 
                         row.setTicker(isStock ? holding.getTicker().toUpperCase() : holding.getTicker());
                         row.setAssetType(isStock ? "STOCK" : holding.getAssetType().name());
-                        row.setName(isStock ? (marketData != null ? marketData.getName() : null) : holding.getName());
+                        String marketName = marketData != null && marketData.getName() != null
+                                        && !marketData.getName().isBlank() ? marketData.getName() : null;
+                        row.setName(isStock ? marketName
+                                        : isMarket && marketName != null ? marketName : holding.getName());
                         row.setShareAmount(holding.getQuantity().setScale(2, RoundingMode.HALF_EVEN));
                         row.setExactShareAmount(holding.getQuantity());
                         BigDecimal costBasis = holding.getOpenCostBasis();
@@ -117,10 +124,13 @@ public class HoldingsCompleteDataServiceImpl implements HoldingsCompleteDataServ
                                                                 .multiply(HUNDRED).setScale(2, RoundingMode.HALF_EVEN));
                                         }
                                 }
+                        }
+                        if (isMarket) {
                                 BigDecimal dailyChange = BigDecimal.ZERO;
                                 if (marketData.getPriceYesterday() != null) {
-                                        dailyChange = marketData.getPrice().subtract(marketData.getPriceYesterday())
-                                                        .setScale(2, RoundingMode.HALF_EVEN);
+                                        dailyChange = marketData.getPrice().subtract(marketData.getPriceYesterday());
+                                        // a coin can trade at fractions of a cent; 2dp would read as no move
+                                        if (isStock) dailyChange = dailyChange.setScale(2, RoundingMode.HALF_EVEN);
                                 }
                                 row.setDailyChange(dailyChange);
                         }

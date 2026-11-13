@@ -153,6 +153,116 @@ class PortfolioAccountingTests {
         assertTrue(result.commissionsByCurrency().isEmpty());
     }
 
+    @Test
+    void confirmedFullSaleConsumesAllBasisAndFeesWithoutChangingActualProceeds() {
+        Transactions sell = trade("SELL", "1.01", "200", "2", "2025-03-01");
+        sell.setClosesPosition(true);
+        var result = accounting.calculate(List.of(trade("BUY", "1", "100", "1", "2025-01-01"), sell),
+                Map.of("TEST", List.of(split("2025-02-01", "1.025"), split("2025-04-01", "1.01"))), today);
+
+        assertTrue(result.positions().isEmpty());
+        amount("99", result.realizedPnLByCurrency().get("USD"));
+        amount("3", result.commissionsByCurrency().get("USD"));
+        amount("3", result.realizedCommissionsByCurrency().get("USD"));
+        amount("1.01", sell.getQuantity());
+        amount("200", sell.getPrice());
+    }
+
+    @Test
+    void absentOrFalseClosureFlagPreservesAnOrdinaryPartialSale() {
+        for (Boolean closesPosition : new Boolean[]{null, false}) {
+            Transactions sell = trade("SELL", "1", "200", "2", "2025-03-01");
+            sell.setClosesPosition(closesPosition);
+            var result = calculate(List.of(trade("BUY", "2", "100", "2", "2025-01-01"), sell));
+
+            amount("1", result.positions().get("TEST").quantity());
+            amount("101", result.positions().get("TEST").costBasis());
+            amount("1", result.positions().get("TEST").commissions());
+            amount("97", result.realizedPnLByCurrency().get("USD"));
+        }
+    }
+
+    @Test
+    void closingSaleDoesNotChangeEarlierBalancesAndALaterBuyStartsAFreshPosition() {
+        Transactions sell = trade("SELL", "1", "150", "1", "2025-03-01");
+        sell.setClosesPosition(true);
+        List<Transactions> trades = List.of(trade("BUY", "1", "100", "1", "2025-01-01"), sell,
+                trade("BUY", "2", "80", "2", "2025-05-01"));
+        Map<String, List<Splits>> splits = Map.of("TEST", List.of(split("2025-02-01", "1.02"),
+                split("2025-04-01", "1.01"), split("2025-06-01", "2")));
+
+        var before = accounting.calculate(trades, splits, LocalDate.of(2025, 2, 28));
+        amount("1.02", before.positions().get("TEST").quantity());
+        amount("101", before.positions().get("TEST").costBasis());
+        assertTrue(before.realizedPnLByCurrency().isEmpty());
+        assertTrue(accounting.calculate(trades, splits, LocalDate.of(2025, 4, 30)).positions().isEmpty());
+
+        var reopened = accounting.calculate(trades, splits, today);
+        amount("4", reopened.positions().get("TEST").quantity());
+        amount("162", reopened.positions().get("TEST").costBasis());
+        amount("2", reopened.positions().get("TEST").commissions());
+        amount("48", reopened.realizedPnLByCurrency().get("USD"));
+    }
+
+    @Test
+    void confirmedFullSaleConsumesAllCurrenciesAndPreservesItsBookedCurrency() {
+        Transactions euroBuy = trade("BUY", "1", "100", "1", "2025-01-01");
+        euroBuy.setCurrency("EUR");
+        Transactions dollarBuy = trade("BUY", "1", "200", "2", "2025-02-01");
+        Transactions sell = trade("SELL", "1.9", "200", "3", "2025-03-01");
+        sell.setClosesPosition(true);
+
+        var result = calculate(List.of(euroBuy, dollarBuy, sell));
+
+        assertTrue(result.positions().isEmpty());
+        amount("-101", result.realizedPnLByCurrency().get("EUR"));
+        amount("175", result.realizedPnLByCurrency().get("USD"));
+        amount("1", result.realizedCommissionsByCurrency().get("EUR"));
+        amount("5", result.realizedCommissionsByCurrency().get("USD"));
+    }
+
+    @Test
+    void confirmedFullSaleUsesActualProceedsWhenImportedQuantityExceedsTrackedLots() {
+        Transactions sell = trade("SELL", "1.1", "150", "2", "2025-02-01");
+        sell.setClosesPosition(true);
+
+        var result = calculate(List.of(trade("BUY", "1", "100", "1", "2025-01-01"), sell));
+
+        assertTrue(result.positions().isEmpty());
+        amount("62", result.realizedPnLByCurrency().get("USD"));
+        amount("3", result.realizedCommissionsByCurrency().get("USD"));
+    }
+
+    @Test
+    void sameDayTradeEnteredSellFirstStillSettlesAsADayTrade() {
+        // recorded order: the SELL before the BUY it sells, both on one date
+        var result = calculate(List.of(trade("BUY", "5", "90", "0", "2025-01-02"),
+                trade("SELL", "10", "110", "1", "2025-02-03"),
+                trade("BUY", "5", "100", "1", "2025-02-03")));
+        assertTrue(result.positions().isEmpty());
+        // 1100 proceeds - 1 sell fee - (450 + 500 + 1 buy fee) basis
+        amount("148", result.realizedPnLByCurrency().get("USD"));
+    }
+
+    @Test
+    void sameDaySellThenRebuyKeepsItsRecordedOrder() {
+        var result = calculate(List.of(trade("BUY", "5", "90", "0", "2025-01-02"),
+                trade("SELL", "5", "110", "0", "2025-02-03"),
+                trade("BUY", "5", "100", "0", "2025-02-03")));
+        amount("5", result.positions().get("TEST").quantity());
+        amount("500", result.positions().get("TEST").costBasis());
+        amount("100", result.realizedPnLByCurrency().get("USD"));
+    }
+
+    @Test
+    void sameDayConfirmedFullSaleWaitsForTheBuyItCloses() {
+        Transactions sell = trade("SELL", "3", "120", "0", "2025-02-03");
+        sell.setClosesPosition(true);
+        var result = calculate(List.of(sell, trade("BUY", "3", "100", "0", "2025-02-03")));
+        assertTrue(result.positions().isEmpty());
+        amount("60", result.realizedPnLByCurrency().get("USD"));
+    }
+
     private PortfolioAccounting.Result calculate(List<Transactions> transactions) {
         return accounting.calculate(transactions, Map.of(), today);
     }

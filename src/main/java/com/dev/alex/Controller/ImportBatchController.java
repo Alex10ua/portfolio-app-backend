@@ -17,7 +17,6 @@ import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -134,7 +133,7 @@ public class ImportBatchController {
         portfolioAccessService.assertOwnership(portfolioId, authentication.getName());
         Optional<ImportBatch> batch = importBatchRepository.findById(batchId);
         if (batch.isEmpty() || !portfolioId.equals(batch.get().getPortfolioId())) {
-            throw new AccessDeniedException("Batch not found or does not belong to this portfolio");
+            throw new com.dev.alex.Config.NotFoundException("Import batch not found");
         }
 
         List<Transactions> batchTransactions = transactionsRepository.findAllByImportBatchId(batchId);

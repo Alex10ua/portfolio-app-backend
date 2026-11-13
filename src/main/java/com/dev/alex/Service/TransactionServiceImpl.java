@@ -1,5 +1,6 @@
 package com.dev.alex.Service;
 
+import com.dev.alex.Config.NotFoundException;
 import com.dev.alex.Model.Enums.TransactionType;
 import com.dev.alex.Model.Transactions;
 import com.dev.alex.Repository.TransactionsRepository;
@@ -47,11 +48,16 @@ public class TransactionServiceImpl implements TransactionService {
     public Transactions updateTransaction(Transactions transaction, String transactionId, String portfolioId) {
         // Find the existing transaction by its ID
         Transactions existingTransaction = transactionsRepository.findById(transactionId)
-                .orElseThrow(() -> new RuntimeException("Transaction not found with id: " + transactionId));
+                .orElseThrow(() -> new NotFoundException("Transaction not found with id: " + transactionId));
 
         // Verify that the transaction belongs to the correct portfolio
         if (!existingTransaction.getPortfolioId().equals(portfolioId)) {
             throw new AccessDeniedException("Transaction does not belong to this portfolio");
+        }
+        TransactionType effectiveType = transaction.getTransactionType() == null
+                ? existingTransaction.getTransactionType() : transaction.getTransactionType();
+        if (Boolean.TRUE.equals(transaction.getClosesPosition()) && effectiveType != TransactionType.SELL) {
+            throw new IllegalArgumentException("Only a SELL transaction can close a position");
         }
 
         // Copy every editable field — commission, currency and assetType used to be dropped here,
@@ -75,6 +81,8 @@ public class TransactionServiceImpl implements TransactionService {
         if (transaction.getCurrency() != null)        existingTransaction.setCurrency(transaction.getCurrency());
         if (transaction.getCommission() != null)      existingTransaction.setCommission(transaction.getCommission());
         if (transaction.getDate() != null)            existingTransaction.setDate(transaction.getDate());
+        if (transaction.getClosesPosition() != null)  existingTransaction.setClosesPosition(transaction.getClosesPosition());
+        if (effectiveType != TransactionType.SELL)     existingTransaction.setClosesPosition(null);
 
         // Same derivation the create path uses — a quantity or price edit must not leave a
         // totalAmount computed from the old values behind.
